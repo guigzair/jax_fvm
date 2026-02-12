@@ -2,6 +2,12 @@ import jax.numpy as jnp
 import jax
 import sys
 
+def get_dt(W, mesh, CFL = 0.5):
+	Primitives = getPrimitive(W)
+	c = jnp.sqrt(1.4 * Primitives[...,3] / Primitives[...,0])
+	lambda_max = c[...,None] + jnp.abs(jnp.sum(jnp.repeat(W[...,None,:], 3, axis=-2)[...,1:3] * mesh.normals, axis = -1))
+	dt_unstr = mesh.area / jnp.sum(lambda_max * mesh.surface[mesh.face_connectivity], axis = -1)
+	return jnp.min(dt_unstr) * CFL
 
 def getConserved(Primitives, gamma = 1.4):
 	rho = Primitives[...,0]
@@ -16,16 +22,38 @@ def getConserved(Primitives, gamma = 1.4):
 	return W
 
 def getPrimitive(W, gamma = 1.4):
-	rho = jnp.clip(W[...,0], a_min = 1e-5)
+	rho = W[...,0]
 	Mom_x = W[...,1]
 	Mom_y = W[...,2]
 	Energy = W[...,3]
 	u = Mom_x / rho 
 	v = Mom_y / rho 
 	P = (Energy - 0.5*rho * (u**2 + v**2)) * (gamma-1)
-	P = jnp.clip(P, a_min = 1e-4)
 	Primitives = jnp.stack([rho, u, v, P], axis = -1)
 	return Primitives
+
+def get_specific_entropy(W, gamma = 1.4):
+    rho = W[...,0]
+    u = W[...,1] / rho
+    v = W[...,2] / rho
+    E = W[...,3]
+    P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)
+    s = jnp.log(P / rho**gamma)
+    return s
+
+def getEntropyVariables(W, gamma = 1.4):
+	rho = W[...,0]
+	u = W[...,1] / rho
+	v = W[...,2] / rho
+	E = W[...,3]
+	P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)
+	s = get_specific_entropy(W, gamma = gamma)
+	V1 = (gamma - s) / (gamma - 1) - 0.5 * rho * (u**2 + v**2) / P
+	V2 = W[...,1] / P
+	V3 = W[...,2] / P
+	V4 = - rho / P
+	V = jnp.stack([V1, V2, V3, V4], axis=-1)
+	return V
 
 def getgradientLSQ(W_L, W_R, mesh):
 	Delta_x = mesh.barycenter[mesh.neighbors] - mesh.barycenter[...,None,:]  # (N_cells, 3, 2)
@@ -70,7 +98,6 @@ def BC_subsonic_inlet(W_R, W_L, mesh, bc_type = 5):
 	W_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] == bc_type)[...,None], 4, axis=-1), W_b, W_R)
 	return W_R
 
-
 def BC_slipwall(W_R, W_L, mesh, bc_type = 2, value = jnp.array([0., 0., 0., 0.])):
 	# value is a background flow to subtract
 	Prim_L = getPrimitive(W_L)
@@ -81,14 +108,28 @@ def BC_slipwall(W_R, W_L, mesh, bc_type = 2, value = jnp.array([0., 0., 0., 0.])
 	W_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] == bc_type)[...,None], 4, axis=-1), W_b, W_R)
 	return W_R	
 
-def BC_state(W_R, W_L, mesh, **kwargs):
-	# value = kwargs.get('value', jnp.array([1.0, 1.0, 1.0, 1.0]))
-	W_R = BC_slipwall(W_R, W_L, mesh, bc_type=2)  # (slip-wall)
-	W_R = BC_inflow(W_R, mesh, bc_type=3, value = getConserved(mesh.inlet_subsonic))  # (supersonic inlet)
+def BC_noslip_wall(W_R, W_L, mesh, bc_type = 2):
+	Prim_L = getPrimitive(W_L)
+	vn = (Prim_L[...,1] * mesh.normals[...,0] + Prim_L[...,2] * mesh.normals[...,1])
+	vt = (- Prim_L[...,1] * mesh.normals[...,1] + Prim_L[...,2] * mesh.normals[...,0])
+
+	vb = Prim_L[...,1:3] - 2 * vn[...,None] * mesh.normals - 2 * vt[...,None] * jnp.stack([-mesh.normals[...,1], mesh.normals[...,0]], axis=-1)
+
+	Prim_b = Prim_L.at[...,1:3].set(vb)
+	W_b = getConserved(Prim_b)
+	W_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] == bc_type)[...,None], 4, axis=-1), W_b, W_R)
+	return W_R	
+
+def BC_state(W_R, W_L, mesh, flag_NS = False, **kwargs):
+	W_R = jax.lax.cond(flag_NS, 
+						BC_noslip_wall(W_R, W_L, mesh, bc_type=2),
+						BC_slipwall(W_R, W_L, mesh, bc_type=2)
+						)
+	value = kwargs.get('value', jnp.array([1.0, 1.0, 1.0, 1.0]))
+	W_R = BC_inflow(W_R, mesh, bc_type=3, value = value)  # (supersonic inlet)
 	W_R = BC_outflow(W_R, W_L, mesh, bc_type=4)  # (free outflow)
 	W_R = BC_subsonic_inlet(W_R, W_L, mesh, bc_type=5)  # (subsonic inlet)
 	return W_R
-
 
 
 ###########################################################################################################
@@ -101,11 +142,30 @@ def get_temperature(Primitives, R = 287):
 	T = P / (rho * R)
 	return T
 
+def get_mach_number(Primitives, gamma = 1.4):
+	u = Primitives[...,1]
+	v = Primitives[...,2]
+	P = Primitives[...,3]
+	rho = Primitives[...,0]
+	c = jnp.sqrt(gamma * P / rho)
+	M = jnp.sqrt(u**2 + v**2) / c
+	return M
+
+def get_total_entropy(W, mesh, gamma = 1.4):
+	eta = get_specific_entropy(W, gamma = gamma)
+	total_entropy = - jnp.sum(W[...,0] * eta * mesh.area / (gamma - 1), axis = -1)
+	return total_entropy
 
 def get_kinetic_energy(Primitives):
     u = Primitives[...,1]
     v = Primitives[...,2]
     return  0.5 * (u**2 + v**2)
+
+def get_total_kinetic_energy(W, mesh):
+	Primitives = getPrimitive(W)
+	kinetic_energy = get_kinetic_energy(Primitives)
+	total_kinetic_energy = jnp.sum(kinetic_energy * mesh.area, axis = -1)
+	return total_kinetic_energy
 
 def get_vorticity(grad):
 	# take as input the gradient of primitives field
@@ -114,21 +174,20 @@ def get_vorticity(grad):
     omega = dv_dx - du_dy
     return omega
 
-def get_vorticity_from_field(W, mesh):
+def get_vorticity_from_field(W, mesh, **kwargs):
 	W_L = jnp.repeat(W[...,None,:], 3, axis=-2)
 	W_R = W[mesh.neighbors]
-	W_R = BC_state(W_R, W_L, mesh)
+	flag_NS = kwargs.get('flag_NS', False)
+	W_R = BC_state(W_R, W_L, mesh, flag_NS=flag_NS)
 	grad = getgradientLSQ(getPrimitive(W_L), getPrimitive(W_R), mesh)
 
 	vort = get_vorticity(grad)
 	return vort
 
-
-
-def get_enstrophy(grad):
-	# take as input the gradient of primitives field
-    omega = get_vorticity(grad)
-    return 0.5 * omega**2
+def get_total_enstrophy(W, mesh):
+	vorticity = get_vorticity_from_field(W, mesh)
+	total_enstrophy = 0.5 * jnp.sum(vorticity**2 * mesh.area, axis = -1)
+	return total_enstrophy
 
 def get_palinstrophy(grad, mesh):
     # take as input the gradient of primitives field
