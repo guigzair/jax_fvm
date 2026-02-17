@@ -73,7 +73,8 @@ def MUSCL(W_L, W_R, grad, mesh):
 
 	return W_L_MUSCL, W_R_MUSCL
 
-def getFlux(W_L, W_R, normals, surfaces, gamma = 1.4, alpha = 1.):
+def getFlux(W_L, W_R, normals, surfaces, **kwargs):
+	gamma = kwargs.get('gamma', 1.4)
 	# i did not put mesh as input in order to vmap this function
 	# Get the cell state for each edge
 	rho_L = W_L[...,0]
@@ -121,7 +122,7 @@ def getFlux(W_L, W_R, normals, surfaces, gamma = 1.4, alpha = 1.):
 	# local_mach = jnp.maximum(jnp.abs(u_L)/jnp.maximum(C_L, 1e-09), jnp.abs(u_R)/jnp.maximum(C_R, 1e-09))
 	# alpha = jnp.sin(jnp.pi * local_mach /2)  # andea s damping 2024
 	# alpha = jnp.where(local_mach >= 1, 1.0, alpha)
-	# alpha = 0.1
+	alpha = kwargs.get('alpha', 0.1)
 
 	flux_rho = (flux_rho_L + flux_rho_R)/2 - alpha * C_max * 0.5 * (rho_R - rho_L)
 	flux_ru = (flux_ru_L + flux_ru_R)/2 - alpha * C_max * 0.5 * (rho_R * u_R - rho_L * u_L)
@@ -167,16 +168,15 @@ def residual(W, mesh, **kwargs):
 	W_R = W[mesh.neighbors]
 
 	# 2nd order - MUSCL with least-square gradient
-	W_R = helper.BC_state(W_R, W_L, mesh)
+	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
 	grad = helper.getgradientLSQ(W_L, W_R, mesh)
 
 	W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
-	W_R = helper.BC_state(W_R, W_L, mesh)
+	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
 
-	Flux = getFlux(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], gamma = 1.4, alpha = kwargs.get('alpha', 1.)) 
+	Flux = getFlux(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
 	# Flux = jax.vmap(getFlux, 
 	# 			in_axes=(0,0,0,0,None,None))(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], 1.4, kwargs.get('alpha', 1.))
-	
 	return Flux / mesh.area[...,None] 
 
 @jax.jit(static_argnums=(1,))

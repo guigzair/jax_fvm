@@ -75,7 +75,8 @@ def MUSCL(W_L, W_R, grad, mesh):
 
 	return W_L_MUSCL, W_R_MUSCL
 
-def getFlux_convective(W_L, W_R, mesh, gamma = 1.4):
+def getFlux_convective(W_L, W_R, mesh, **kwargs):
+	gamma = kwargs.get('gamma', 1.4)
 	# Get the cell state for each edge
 	rho_L = W_L[...,0]
 	mom_x_L = W_L[...,1]
@@ -119,7 +120,7 @@ def getFlux_convective(W_L, W_R, mesh, gamma = 1.4):
 	flux_E_R = (en_R + P_R) * (u_R * nx + v_R * ny)
 
 	# Total flux
-	alpha = 0.1
+	alpha = kwargs.get('alpha', 0.1) # dissipation coefficient
 
 	flux_rho = (flux_rho_L + flux_rho_R)/2 - alpha * C_max * 0.5 * (rho_R - rho_L)
 	flux_ru =(flux_ru_L + flux_ru_R)/2 - alpha * C_max * 0.5 * (rho_R * u_R - rho_L * u_L)
@@ -135,7 +136,7 @@ def getFlux_convective(W_L, W_R, mesh, gamma = 1.4):
 	Flux = jnp.sum(Flux, axis = -2)
 	return Flux
 
-def getFlux_diffusive(grad_prim, Prim_L, Prim_R, **kwargs):
+def getFlux_diffusive(grad_prim, Prim_L, Prim_R, mesh, **kwargs):
 	mu = kwargs.get('mu', 1.716e-5)
 	R = kwargs.get('R', 287)
 	k = kwargs.get('k', 0.0257)
@@ -205,7 +206,7 @@ def time_step(W, mesh, dt, **kwargs):
 	Prim_L = helper.getPrimitive(W_L)
 	Prim_R = helper.getPrimitive(W_R)
 	grad_prim = helper.getgradientLSQ(Prim_L, Prim_R, mesh)
-	Flux_diffusive = getFlux_diffusive(grad_prim, Prim_L, Prim_R, **kwargs)
+	Flux_diffusive = getFlux_diffusive(grad_prim, Prim_L, Prim_R, mesh, **kwargs)
 
 	W = W - dt / mesh.area[...,None] * (Flux - Flux_diffusive) 
 	return W
@@ -217,19 +218,22 @@ def residual(W, mesh, **kwargs):
 	W_R = W[mesh.neighbors]
 
 	# 2nd order - MUSCL with least-square gradient
-	W_R = helper.BC_state_NS(W_R, W_L, mesh)
+	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
 	grad = helper.getgradientLSQ(W_L, W_R, mesh)
 
 	W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
-	W_R = helper.BC_state_NS(W_R, W_L, mesh)
+	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
 
-	Flux = getFlux_convective(W_L, W_R, mesh, gamma = 1.4)
+	Flux = getFlux_convective(W_L, W_R, mesh, **kwargs)
 	
 	# compute diffusive flux based on primitive variable gradients
 	Prim_L = helper.getPrimitive(W_L)
 	Prim_R = helper.getPrimitive(W_R)
 	grad_prim = helper.getgradientLSQ(Prim_L, Prim_R, mesh)
-	Flux_diffusive = getFlux_diffusive(grad_prim, Prim_L, Prim_R, **kwargs)
+	Flux_diffusive = getFlux_diffusive(grad_prim, Prim_L, Prim_R, mesh, **kwargs)
+
+	# jax.debug.print("Max flux: {max_flux:.2e}, Max diffusive flux: {max_diff_flux:.2e}", 
+	# 			 max_flux = jnp.mean(jnp.abs(Flux)), max_diff_flux = jnp.mean(jnp.abs(Flux_diffusive)))
 
 	R = 1/ mesh.area[...,None] * (Flux - Flux_diffusive) 
 	return R
@@ -269,11 +273,12 @@ def time_step_Newton(W, mesh, dt, **kwargs):
 		W = W + delta * 0.6  # under-relaxation to ensure convergence
 	return W
 
-
 @jax.jit(static_argnums=(1,))
 def SDIRK2(W, mesh, dt, **kwargs):
 	x = 1 - 1/jnp.sqrt(2) # singly diagonally implicit RK
-	n_newton = 4
+	n_newton = 2
+	maxiter = 2
+	tol= 1e-2
 	# first step
 	W1 = W
 	for _ in range(n_newton):
@@ -283,7 +288,7 @@ def SDIRK2(W, mesh, dt, **kwargs):
 						(W1,),
 						(v,))
 			return v + dt * jvp
-		delta, _ = jax.scipy.sparse.linalg.gmres(Jv, -Fval, tol=5e-3, maxiter=3, restart = 25)
+		delta, _ = jax.scipy.sparse.linalg.gmres(Jv, -Fval, tol=tol, maxiter= maxiter, restart = 25)
 		W1 = W1 + delta * 0.6  # under-relaxation to ensure convergence
 	F1 = residual(W1, mesh, **kwargs)
 
@@ -296,7 +301,7 @@ def SDIRK2(W, mesh, dt, **kwargs):
 						(W2,),
 						(v,))
 			return v + dt * x * jvp
-		delta, _ = jax.scipy.sparse.linalg.gmres(Jv, -Fval, tol=5e-3, maxiter=3, restart = 25)
+		delta, _ = jax.scipy.sparse.linalg.gmres(Jv, -Fval, tol=tol, maxiter=maxiter, restart = 25)
 		W2 = W2 + delta * 0.6  # under-relaxation to ensure convergence
 	F2 = residual(W2, mesh, **kwargs)
 
@@ -312,7 +317,7 @@ if __name__ == "__main__":
 	C_v = R / (gamma - 1)
 	C_p = C_v * gamma
 	k = 5/2 * mu * C_v
-	kwargs = {'mu': mu, 'R': R, 'k': k}
+	kwargs = {'gamma': gamma, 'mu': mu, 'R': R, 'k': k, 'flag_NS': True, 'alpha': 0.1}
 
 	# little test case: Forward facing step
 	mesh = Mesh_cases.TestDipoleVortex().build(h = 5e-5, L = 1.)
@@ -321,8 +326,11 @@ if __name__ == "__main__":
 
 	# Time loop
 	t_final = 0.2 #/ jnp.mean(Primitives[...,1]) # to get real time
-	CFL = 0.5
+	CFL = 0.3
 	dt = helper.get_dt(W, mesh, CFL = CFL)
+	dt_viscous = helper.get_dt_viscous(mesh, CFL = CFL, nu = mu / jnp.mean(Primitives[...,0]))
+	dt = jnp.min(jnp.array([dt, dt_viscous]))
+	print(f"dt convective: {dt:.2e}, dt viscous: {dt_viscous:.2e}")
 	N_t = int(t_final / dt) + 1
 
 	start_time = time.time()
@@ -330,7 +338,8 @@ if __name__ == "__main__":
 	T_interval_snapshots = 100
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
-		W = time_step_RK2(W, mesh, dt, alpha = 0.1)
+		W = time_step_RK2(W, mesh, dt, **kwargs)
+		# W = SDIRK2(W, mesh, dt, **kwargs)
 		if n % 100 == 0:
 			print(f'It : {n} / {N_t}')
 		if n % T_interval_snapshots == 0:
@@ -341,12 +350,13 @@ if __name__ == "__main__":
 	# Plot solution
 	Primitives = helper.getPrimitive(W)
 	mesh.plot_solution(Primitives[...,0], labels = r'$\rho$')
-	mesh.plot_solution(Primitives[...,1], labels = r'$u$')
-	mesh.plot_solution(Primitives[...,2], labels = r'$v$')
+	# mesh.plot_solution(Primitives[...,1], labels = r'$u$')
+	# mesh.plot_solution(Primitives[...,2], labels = r'$v$')
 	mesh.plot_solution(Primitives[...,3], labels = r'$P$')
 
 	# vorticity
-	vorticity = helper.get_vorticity_from_field(W, mesh)
+	vorticity = helper.get_vorticity_from_field(W, mesh, **kwargs)
+	mesh.plot_contour_solution(vorticity, labels = r'$\omega$')
 	mesh.plot_solution(vorticity, labels = r'$\omega$')
 
 	# entropy plot
@@ -358,7 +368,7 @@ if __name__ == "__main__":
 	ax.grid()
 
 	# enstrophy plot
-	Total_enstrophy = jax.lax.map(lambda x: helper.get_total_enstrophy(x, mesh), Snapshots)
+	Total_enstrophy = jax.lax.map(lambda x: helper.get_total_enstrophy(x, mesh, **kwargs), Snapshots)
 	fig, ax = plt.subplots()
 	ax.plot(jnp.arange(Snapshots.shape[0]) * T_interval_snapshots * dt, Total_enstrophy)
 	ax.set_xlabel(r't')
@@ -372,4 +382,6 @@ if __name__ == "__main__":
 	ax.set_xlabel(r't')
 	ax.set_ylabel(r'$E$')
 	ax.grid()
+
+
 	

@@ -9,6 +9,11 @@ def get_dt(W, mesh, CFL = 0.5):
 	dt_unstr = mesh.area / jnp.sum(lambda_max * mesh.surface[mesh.face_connectivity], axis = -1)
 	return jnp.min(dt_unstr) * CFL
 
+def get_dt_viscous(mesh, CFL = 0.5, nu= 1e-5):
+	dx_i = mesh.area / jnp.sum(mesh.surface[mesh.face_connectivity], axis = -1)
+	dt = jnp.min(CFL * dx_i**2 / nu)
+	return dt
+
 def getConserved(Primitives, gamma = 1.4):
 	rho = Primitives[...,0]
 	u = Primitives[...,1]
@@ -54,6 +59,21 @@ def getEntropyVariables(W, gamma = 1.4):
 	V4 = - rho / P
 	V = jnp.stack([V1, V2, V3, V4], axis=-1)
 	return V
+
+def getConserved_from_Entropy(ETA, gamma = 1.4):
+	eta1 = ETA[...,0]
+	eta2 = ETA[...,1]
+	eta3 = ETA[...,2]
+	eta4 = ETA[...,3]
+
+	u = - eta2 / eta4
+	v = - eta3 / eta4
+	s = gamma - (gamma - 1) * (eta1 - 0.5 * (u**2 + v**2) * eta4)
+	rho = (- eta4)**(1/(1-gamma)) * jnp.exp(s/(1-gamma))
+	P = -rho / eta4
+	E = P/(gamma-1) + 0.5*rho*(u**2 + v**2)
+	W = jnp.stack([rho, rho * u, rho * v, E], axis=-1)
+	return W
 
 def getgradientLSQ(W_L, W_R, mesh):
 	Delta_x = mesh.barycenter[mesh.neighbors] - mesh.barycenter[...,None,:]  # (N_cells, 3, 2)
@@ -120,17 +140,15 @@ def BC_noslip_wall(W_R, W_L, mesh, bc_type = 2):
 	W_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] == bc_type)[...,None], 4, axis=-1), W_b, W_R)
 	return W_R	
 
-def BC_state(W_R, W_L, mesh, flag_NS = False, **kwargs):
-	W_R = jax.lax.cond(flag_NS, 
-						BC_noslip_wall(W_R, W_L, mesh, bc_type=2),
-						BC_slipwall(W_R, W_L, mesh, bc_type=2)
-						)
-	value = kwargs.get('value', jnp.array([1.0, 1.0, 1.0, 1.0]))
-	W_R = BC_inflow(W_R, mesh, bc_type=3, value = value)  # (supersonic inlet)
+def BC_state(W_R, W_L, mesh, **kwargs):
+	W_R = jax.lax.cond(kwargs.get('flag_NS', False),
+						lambda x, y: BC_noslip_wall(x, y, mesh, bc_type=2),
+						lambda x, y: BC_slipwall(x, y, mesh, bc_type=2),
+						W_R, W_L)
+	W_R = BC_inflow(W_R, mesh, bc_type=3, value = kwargs.get('value', jnp.array([1.0, 1.0, 1.0, 1.0])))  # (supersonic inlet)
 	W_R = BC_outflow(W_R, W_L, mesh, bc_type=4)  # (free outflow)
 	W_R = BC_subsonic_inlet(W_R, W_L, mesh, bc_type=5)  # (subsonic inlet)
 	return W_R
-
 
 ###########################################################################################################
 ##########################               other functions                   ################################
@@ -177,15 +195,14 @@ def get_vorticity(grad):
 def get_vorticity_from_field(W, mesh, **kwargs):
 	W_L = jnp.repeat(W[...,None,:], 3, axis=-2)
 	W_R = W[mesh.neighbors]
-	flag_NS = kwargs.get('flag_NS', False)
-	W_R = BC_state(W_R, W_L, mesh, flag_NS=flag_NS)
+	W_R = BC_state(W_R, W_L, mesh, flag_NS=kwargs.get('flag_NS', False))
 	grad = getgradientLSQ(getPrimitive(W_L), getPrimitive(W_R), mesh)
 
 	vort = get_vorticity(grad)
 	return vort
 
-def get_total_enstrophy(W, mesh):
-	vorticity = get_vorticity_from_field(W, mesh)
+def get_total_enstrophy(W, mesh, **kwargs):
+	vorticity = get_vorticity_from_field(W, mesh, **kwargs)
 	total_enstrophy = 0.5 * jnp.sum(vorticity**2 * mesh.area, axis = -1)
 	return total_enstrophy
 

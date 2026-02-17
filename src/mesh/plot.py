@@ -58,6 +58,40 @@ def plot_solution(mesh, field_data, labels = r'$\rho$'):
     ax.set_ylim(ymin, ymax)
     clb = fig.colorbar(tpc, cax = cax)
     clb.ax.set_title(labels)
+    # plt.tight_layout()
+
+def plot_contour_solution(mesh, field_data, **kwargs):
+    xmin = mesh.points[:,0].min()
+    xmax = mesh.points[:,0].max()
+    ymin = mesh.points[:,1].min()
+    ymax = mesh.points[:,1].max()
+
+    fig, ax = plt.subplots(dpi = 500)
+    ax.set_aspect('equal')
+    AR = (xmax - xmin) / (ymax - ymin)
+    N = kwargs.get('N', 128)
+    # Create grid values first.
+    xi = np.linspace(xmin, xmax, int(N * AR))
+    yi = np.linspace(ymin, ymax, N)
+
+    # Linearly interpolate the data (x, y) on a grid defined by (xi, yi).
+    triang = mtri.Triangulation(mesh.barycenter[:, 0], mesh.barycenter[:, 1])
+    interpolator = mtri.LinearTriInterpolator(triang, field_data)
+
+    Xi, Yi = np.meshgrid(xi, yi)
+    zi = interpolator(Xi, Yi)
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    triang = mtri.Triangulation(mesh.points[:, 0], mesh.points[:, 1], mesh.tris)
+    tpc = ax.tripcolor(triang, facecolors = field_data)
+    clb = fig.colorbar(tpc, cax = cax)
+    clb.ax.set_title(kwargs.get('labels', r'$\rho$'))
+    ax.contour(xi, yi, zi, levels=kwargs.get('levels', 20), linewidths=0.5, colors='k')
+    ax.set_xlabel(r'$x$')
+    ax.set_ylabel(r'$y$')
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
     plt.tight_layout()
 
 

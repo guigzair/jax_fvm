@@ -224,6 +224,9 @@ class Mesh:
 
     def plot_solution(self, field_data, *args, **kwargs):
         plot.plot_solution(self, field_data, *args, **kwargs)
+    
+    def plot_contour_solution(self, field_data, *args, **kwargs):
+        plot.plot_contour_solution(self, field_data, *args, **kwargs)
 
     def animate_field(self, field_sequence, interval=100):
         plot.animate_solution(self, field_sequence, interval=interval)
