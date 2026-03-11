@@ -25,7 +25,18 @@ def get_palinstrophy(omega_hat, mesh):
     total_palinstrophy = jnp.sum(palinstrophy_spectrum) * (mesh.L)**2 / (mesh.X.shape[0]**2)
     return total_palinstrophy
 
+def get_energy_spectrum(omega_hat, mesh):
+    psi_hat = omega_hat / mesh.k2
 
+    # energy spectrum
+    E_k = 0.5 * (jnp.abs(psi_hat)**2 ).reshape(-1) * (mesh.L**2 / mesh.N**4) 
+    k_magnitude = jnp.sqrt(mesh.k2).reshape(-1)
+    k_bins = jnp.arange(jnp.min(k_magnitude), mesh.N //2 , 1.0)
+    E_k_bin = jnp.zeros_like(k_bins)
+    for i in range(len(k_bins)-1):
+        mask = (k_magnitude >= k_bins[i]) & (k_magnitude < k_bins[i+1])
+        E_k_bin = E_k_bin.at[i].set(jnp.sum(E_k[mask]))
+    return k_bins[:-1], E_k_bin[:-1]
 
 def gaussian_vortex(mesh, x0, y0, r0, omega0):
     r2 = (mesh.X - x0)**2 + (mesh.Y - y0)**2

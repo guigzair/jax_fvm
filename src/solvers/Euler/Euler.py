@@ -255,12 +255,13 @@ if __name__ == "__main__":
 
 	# Initial condition
 	Primitives, mesh = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
+
 	W = helper.getConserved(Primitives)
 	mesh.plot_mesh()
 
 	# Time loop
 	t_final = 0.2 #/ jnp.mean(Primitives[...,1]) # to get real time
-	CFL = 5.
+	CFL = 0.5
 	dt = helper.get_dt(W, mesh, CFL = CFL)
 	N_t = int(t_final / dt) + 1
 
@@ -269,8 +270,8 @@ if __name__ == "__main__":
 	T_interval_snapshots = 100
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
-		# W = time_step_RK2(W, mesh, dt, alpha = 0.1)
-		W = time_step_Newton(W, mesh, dt, alpha = 0.1)
+		W = time_step_RK2(W, mesh, dt, alpha = 0.1)
+		# W = time_step_Newton(W, mesh, dt, alpha = 0.1)
 		# W = SDIRK2(W, mesh, dt, alpha = 0.1)
 		if n % 100 == 0:
 			print(f'It : {n} / {N_t}')
