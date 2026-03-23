@@ -4,12 +4,12 @@ import jax
 jax.config.update("jax_debug_nans", True)
 import sys
 sys.path.append('../../../..')  
-from FVM.src.mesh.mesh import Mesh # pyright: ignore[reportMissingImports]
-import FVM.src.mesh.plot as plot # pyright: ignore[reportMissingImports]
-import FVM.src.Cases.Test_Cases as Test_Cases # pyright: ignore[reportMissingImports]
-import FVM.src.mesh.Mesh_cases as Mesh_cases # pyright: ignore[reportMissingImports]
+from jax_fvm.src.mesh.mesh import Mesh # pyright: ignore[reportMissingImports]
+import jax_fvm.src.mesh.plot as plot # pyright: ignore[reportMissingImports]
+import jax_fvm.src.Cases.Test_Cases as Test_Cases # pyright: ignore[reportMissingImports]
+import jax_fvm.src.mesh.Mesh_cases as Mesh_cases # pyright: ignore[reportMissingImports]
 import time
-import FVM.src.solvers.helper as helper # pyright: ignore[reportMissingImports]
+import jax_fvm.src.solvers.helper as helper # pyright: ignore[reportMissingImports]
 import matplotlib.pyplot as plt
 size = 14
 params = {
@@ -34,29 +34,36 @@ With jax.jit compilation = ~ 100x faster for large data
 
 def venkatakrishnan(a, b, h = 0, K = 0):
 	omega = (K * h)**3 
-	L = (a**2 + 2 * a*b + omega) / (a**2 + 2*b**2 + a*b + omega + 1e-09)
+	L = (a**2 + 2 * a*b + omega) / (a**2 + 2*b**2 + a*b + omega + 1e-07)
 	return L
 
-def getlimiting(W_L, W_R, grad, mesh):
-	W_m  = jnp.min(jnp.concatenate([W_L, W_R], axis = -2), axis = -2)
-	W_M  = jnp.max(jnp.concatenate([W_L, W_R], axis = -2), axis = -2)
+def minmod(a, b):
+	c = a / b
+	return jnp.maximum(jnp.minimum(1., c), 0.) 
+
+def getlimiting(W_L, W_R, grad, mesh, limiting_fct = venkatakrishnan):
+	W_m  = jnp.min(jnp.concatenate([W_L, W_R], axis = -2), axis = -2) # (N_cells, N_vars)
+	W_M  = jnp.max(jnp.concatenate([W_L, W_R], axis = -2), axis = -2) # (N_cells, N_vars)
 
 	mid_point_faces = jnp.mean(mesh.points[mesh.faces[mesh.face_connectivity]], axis = -2) # (N_cells,3,2)
 	delta_x = mid_point_faces - mesh.barycenter[...,None,:]  # (N_cells, 3, 2)
 	Delta = jnp.einsum('ijl,ikl->ijk', delta_x, grad)  # (N_cells, 3, N_vars)
 
 	phi = jnp.ones_like(Delta)
-	phi = jnp.where(Delta > 1e-8,
-					venkatakrishnan(W_M[...,None,:] - W_L, Delta),
+
+	phi = jnp.where(Delta > 1e-7,
+					limiting_fct(W_M[...,None,:] - W_L, Delta),
 					phi)
-	phi = jnp.where(Delta < -1e-8,
-					venkatakrishnan(W_m[...,None,:] - W_L, Delta),
+	phi = jnp.where(Delta < -1e-7,
+					limiting_fct(W_m[...,None,:] - W_L, Delta),
 					phi)
 	phi = jnp.min(phi, axis = -2)  # (N_cells, N_vars)
 	return phi
 
 def MUSCL(W_L, W_R, grad, mesh):
+
 	phi = getlimiting(W_L, W_R, grad, mesh)  # (N_cells, N_vars)
+	# phi = jnp.ones_like(phi) # --- IGNORE --- for 2nd order without limiter
 
 	mid_point_faces = jnp.mean(mesh.points[mesh.faces[mesh.face_connectivity]], axis = -2) # (N_cells,3,2)
 	
@@ -64,12 +71,16 @@ def MUSCL(W_L, W_R, grad, mesh):
 	Delta = jnp.einsum('ijl,ikl->ijk', delta_x, grad)  # (N_cells, 3, N_vars)
 
 	delta_x_neigh = mid_point_faces - mesh.barycenter[mesh.neighbors]  # (N_cells, 3, 2)
-	delta_x_neigh = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] > 0)[...,None], 2, axis=-1), -delta_x, delta_x_neigh) # Boundary faces: reverse the direction
+	delta_x_neigh = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] > 0)[...,None], 2, axis=-1), 
+						   		-delta_x, delta_x_neigh) # Boundary faces: reverse the direction
 	Delta_neigh = jnp.einsum('ijl,ijkl->ijk', delta_x_neigh, grad[mesh.neighbors])
 
 
 	W_L_MUSCL = W_L + phi[...,None,:] * Delta  # (N_cells, 3, N_vars)
-	W_R_MUSCL = W_R + phi[mesh.neighbors] * Delta_neigh  # (N_cells, 3, N_vars)
+	phi_neigh = jnp.where(mesh.face_markers[mesh.face_connectivity][...,None] > 1,
+							0.,
+							phi[mesh.neighbors])  # (N_cells, 3, N_vars) 
+	W_R_MUSCL = W_R + phi_neigh * Delta_neigh  # (N_cells, 3, N_vars)
 
 	return W_L_MUSCL, W_R_MUSCL
 
@@ -99,8 +110,8 @@ def getFlux(W_L, W_R, normals, surfaces, **kwargs):
 	ny = normals[...,1]
 
     # Maximum wavelenghts
-	C_L = jnp.sqrt(jnp.abs(gamma*P_L/rho_L))  + jnp.abs(u_L * nx + v_L * ny)
-	C_R = jnp.sqrt(jnp.abs(gamma*P_R/rho_R))  + jnp.abs(u_R * nx + v_R * ny)
+	C_L = jnp.sqrt(jnp.abs(gamma*P_L/rho_L)) + jnp.abs(u_L * nx + v_L * ny)
+	C_R = jnp.sqrt(jnp.abs(gamma*P_R/rho_R)) + jnp.abs(u_R * nx + v_R * ny)
 	C_max = jnp.maximum(C_R, C_L)
 
 	# Energy
@@ -150,10 +161,15 @@ def time_step(W, mesh, dt, **kwargs):
 
 	# 2nd order - MUSCL with least-square gradient
 	W_R = helper.BC_state(W_R, W_L, mesh)
+	# grad = helper.gradient_GG(W_L, W_R, mesh)
+	W_L = helper.getPrimitive(W_L)
+	W_R = helper.getPrimitive(W_R)
 	grad = helper.getgradientLSQ(W_L, W_R, mesh)
-
 	W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
-	W_R = helper.BC_state(W_R, W_L, mesh)
+	W_L = helper.getConserved(W_L)
+	W_R = helper.getConserved(W_R)
+
+	# W_R = helper.BC_state(W_R, W_L, mesh)
 
 	Flux = getFlux(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], 
 				gamma = 1.4, alpha = kwargs.get('alpha', 1.)) 
@@ -169,10 +185,14 @@ def residual(W, mesh, **kwargs):
 
 	# 2nd order - MUSCL with least-square gradient
 	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
-	grad = helper.getgradientLSQ(W_L, W_R, mesh)
 
+	W_L = helper.getPrimitive(W_L)
+	W_R = helper.getPrimitive(W_R)
+	grad = helper.getgradientLSQ(W_L, W_R, mesh)
 	W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
-	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
+	W_L = helper.getConserved(W_L)
+	W_R = helper.getConserved(W_R)
+
 
 	Flux = getFlux(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
 	# Flux = jax.vmap(getFlux, 
@@ -251,34 +271,49 @@ def SDIRK2(W, mesh, dt, **kwargs):
 
 
 if __name__ == "__main__":
-	mesh = Mesh_cases.TestDipoleVortex().build(h = 5e-5, L = 1.)
+	# mesh = Mesh_cases.TestDipoleVortex().build(h = 5e-6, L = 1.)
 
 	# Initial condition
-	Primitives, mesh = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
+	# Primitives, mesh = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
+
+	# mesh = Mesh_cases.Forward_Step().build(h = 5e-5)
+	# Primitives = Test_Cases.ForwardFacingStep().build(mesh)
+
+	mesh = Mesh()
+	mesh.mesh_generator(maxV = 5e-5, marker_boundary=1)
+	Primitives = Test_Cases.advected_sinus().build(mesh, u = 1, v = 1)
 
 	W = helper.getConserved(Primitives)
 	mesh.plot_mesh()
 
 	# Time loop
-	t_final = 0.2 #/ jnp.mean(Primitives[...,1]) # to get real time
-	CFL = 0.5
+	t_final = 1. #/ jnp.mean(Primitives[...,1]) # to get real time
+	CFL = 0.2
 	dt = helper.get_dt(W, mesh, CFL = CFL)
 	N_t = int(t_final / dt) + 1
 
 	start_time = time.time()
 
-	T_interval_snapshots = 100
+	T_interval_snapshots = 1000
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
-		W = time_step_RK2(W, mesh, dt, alpha = 0.1)
+		W = time_step(W, mesh, dt, alpha = 1.)
 		# W = time_step_Newton(W, mesh, dt, alpha = 0.1)
 		# W = SDIRK2(W, mesh, dt, alpha = 0.1)
-		if n % 100 == 0:
+		if n % 1000 == 0:
 			print(f'It : {n} / {N_t}')
+			if jnp.isnan(W).any():
+				print(f'NaN detected at iteration {n}')
+				break
 		if n % T_interval_snapshots == 0:
 			Snapshots = Snapshots.at[int(n/T_interval_snapshots)].set(W)
 
 	print(f'Simulation time: {time.time() - start_time} seconds')
+
+	# Prim_snapshots = helper.getPrimitive(Snapshots)
+	# jnp.where(Prim_snapshots[...,3] == jnp.min(Prim_snapshots[...,3]))
+
+	# mesh.plot_slice(helper.getPrimitive(Snapshots[227])[...,3], y = 0.3, n = 200, labels = r'$P$')
 
 	# Plot solution
 	Primitives = helper.getPrimitive(W)
@@ -292,6 +327,11 @@ if __name__ == "__main__":
 	mesh.plot_solution(vorticity, labels = r'$\omega$')
 
 	# entropy plot
+	Entropy_rec = jnp.zeros(Snapshots.shape[0])
+	for i in range(Snapshots.shape[0]):
+		Entropy_rec = Entropy_rec.at[i].set(helper.get_total_entropy(Snapshots[i], mesh))
+	plt.plot(Entropy_rec)
+
 	Total_entropy = jax.lax.map(lambda x: helper.get_total_entropy(x, mesh), Snapshots)
 	fig, ax = plt.subplots()
 	ax.plot(jnp.arange(Snapshots.shape[0]) * T_interval_snapshots * dt, Total_entropy)

@@ -3,7 +3,7 @@ import numpy as np
 import jax
 import sys
 sys.path.append('../../..')  
-from FVM.src.mesh.mesh import Mesh 
+from jax_fvm.src.mesh.mesh import Mesh 
 import meshpy.triangle as triangle
 
 
@@ -74,5 +74,5 @@ class TestMovingVortex():
         mesh.mesh_generator(info = info, maxV=h)
         return mesh
     
-    
+
 

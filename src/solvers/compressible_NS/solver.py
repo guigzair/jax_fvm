@@ -4,11 +4,11 @@ jax.config.update("jax_debug_nans", True)
 import sys
 
 sys.path.append('../../../..')  
-from FVM.src.mesh.mesh import Mesh # pyright: ignore[reportMissingImports]
-import FVM.src.Cases.Test_Cases as Test_Cases # pyright: ignore[reportMissingImports]
-import FVM.src.mesh.Mesh_cases as Mesh_cases # pyright: ignore[reportMissingImports]
+from jax_fvm.src.mesh.mesh import Mesh # pyright: ignore[reportMissingImports]
+import jax_fvm.src.Cases.Test_Cases as Test_Cases # pyright: ignore[reportMissingImports]
+import jax_fvm.src.mesh.Mesh_cases as Mesh_cases # pyright: ignore[reportMissingImports]
 import time
-import FVM.src.solvers.helper as helper # pyright: ignore[reportMissingImports]
+import jax_fvm.src.solvers.helper as helper # pyright: ignore[reportMissingImports]
 
 import matplotlib.pyplot as plt
 size = 14
@@ -320,13 +320,13 @@ if __name__ == "__main__":
 	kwargs = {'gamma': gamma, 'mu': mu, 'R': R, 'k': k, 'flag_NS': True, 'alpha': 0.1}
 
 	# little test case: Forward facing step
-	mesh = Mesh_cases.TestDipoleVortex().build(h = 5e-5, L = 1.)
+	mesh = Mesh_cases.TestDipoleVortex().build(h = 1e-5, L = 1.)
 	Primitives, mesh = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
 	W = helper.getConserved(Primitives)
 
 	# Time loop
-	t_final = 0.2 #/ jnp.mean(Primitives[...,1]) # to get real time
-	CFL = 0.3
+	t_final = 0.2 
+	CFL = 25
 	dt = helper.get_dt(W, mesh, CFL = CFL)
 	dt_viscous = helper.get_dt_viscous(mesh, CFL = CFL, nu = mu / jnp.mean(Primitives[...,0]))
 	dt = jnp.min(jnp.array([dt, dt_viscous]))
@@ -335,11 +335,11 @@ if __name__ == "__main__":
 
 	start_time = time.time()
 
-	T_interval_snapshots = 100
+	T_interval_snapshots = 20
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
-		W = time_step_RK2(W, mesh, dt, **kwargs)
-		# W = SDIRK2(W, mesh, dt, **kwargs)
+		# W = time_step_RK2(W, mesh, dt, **kwargs)
+		W = time_step_Newton(W, mesh, dt, **kwargs)
 		if n % 100 == 0:
 			print(f'It : {n} / {N_t}')
 		if n % T_interval_snapshots == 0:

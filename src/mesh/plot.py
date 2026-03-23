@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib import tri as mtri
 import numpy as np
 import matplotlib.animation as animation
+import jax
 size = 14
 params = {
     'text.usetex': True,
@@ -95,7 +96,7 @@ def plot_contour_solution(mesh, field_data, **kwargs):
     plt.tight_layout()
 
 
-def animate_solution(mesh, field_sequence, interval=200):
+def animate_solution(mesh, field_sequence, path = "animation.gif", interval=200):
     triang = mtri.Triangulation(mesh.points[:, 0], mesh.points[:, 1], mesh.tris)
 
     xmin = mesh.points[:,0].min()
@@ -114,7 +115,7 @@ def animate_solution(mesh, field_sequence, interval=200):
 
     ani = animation.FuncAnimation(fig, update, frames=len(field_sequence), interval=interval)
 
-    ani.save('vorticity_evolution.gif', writer='imagemagick')
+    ani.save(path, writer='imagemagick')
 
 def plot(y, labels = r'$E_k$'):
     fig, ax = plt.subplots()
@@ -122,3 +123,15 @@ def plot(y, labels = r'$E_k$'):
     ax.grid()
     ax.set_xlabel(r'$t$')
     ax.set_ylabel(labels)
+
+
+def getSliceinMesh(Prim, mesh, y = 0.5, n = 200):
+	x_min, x_max = jnp.min(mesh.barycenter[...,0]), jnp.max(mesh.barycenter[...,0])
+	x = jnp.linspace(x_min, x_max, n)
+	slice = jnp.zeros((n,2))
+	slice = slice.at[:,0].set(x)
+	slice = slice.at[:,1].set(y)
+	cdist = jnp.linalg.norm(slice[:, None] - mesh.barycenter[None], axis=-1)
+	_, id = jax.lax.top_k(-cdist, k=1)
+	out = Prim[id].squeeze()
+	return out, slice

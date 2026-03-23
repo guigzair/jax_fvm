@@ -3,9 +3,9 @@ import jax
 import sys
 
 sys.path.append('../../../..')  
-from FVM.src.mesh.mesh import Mesh
-import FVM.src.Cases.Test_Cases as Test_Cases
-import FVM.src.mesh.Mesh_cases as Mesh_cases
+from jax_fvm.src.mesh.mesh import Mesh
+import jax_fvm.src.Cases.Test_Cases as Test_Cases
+import jax_fvm.src.mesh.Mesh_cases as Mesh_cases
 import time
 import helper as NS_helper
 

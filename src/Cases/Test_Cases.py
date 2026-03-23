@@ -509,3 +509,20 @@ class TaylorGreenVortex():
         Primitives = Primitives.at[...,0].set(u)
         Primitives = Primitives.at[...,1].set(v)
         return Primitives
+    
+class advected_sinus():
+    def build(self, mesh, u = 1., v = 0., p = 1):
+        N = len(mesh.area)
+        L = jnp.max(mesh.points[...,0]) - jnp.min(mesh.points[...,0])
+        
+        def scalar_field(x, y):
+            return 1.5 - jnp.sin(2 * jnp.pi * x / L) * jnp.cos(2 * jnp.pi * y / L)
+
+        Primitives = jnp.zeros((N, 4))
+        s = scalar_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
+        Primitives = Primitives.at[...,0].set(s)
+        Primitives = Primitives.at[...,1].set(u)
+        Primitives = Primitives.at[...,2].set(v)
+        Primitives = Primitives.at[...,3].set(p)
+        return Primitives
+        

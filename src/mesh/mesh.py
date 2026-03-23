@@ -4,8 +4,22 @@ import meshpy.triangle as triangle
 import jax.numpy as jnp
 import numpy as np
 sys.path.append('../../..')  
-import FVM.src.mesh.plot as plot
+import jax_fvm.src.mesh.plot as plot
 import jax
+
+import matplotlib.pyplot as plt
+size = 14
+params = {
+    'text.usetex': True,
+    'font.family': 'serif',
+    'font.serif': 'cm',  # Computer Modern font
+	'legend.fontsize':size,
+    'axes.labelsize' : size,
+	'axes.titlesize' : size +2,
+    'xtick.labelsize' : size+1,
+    'ytick.labelsize' : size+1
+}
+plt.rcParams.update(params)
 
 
 class Mesh:
@@ -143,9 +157,9 @@ class Mesh:
             return jnp.max(idx)  # Will be -1 if no match found
         
         # Vectorized version to find all face indices
-        face_idx_0 = jax.vmap(find_face_index)(sorted_edge_0)
-        face_idx_1 = jax.vmap(find_face_index)(sorted_edge_1)
-        face_idx_2 = jax.vmap(find_face_index)(sorted_edge_2)
+        face_idx_0 = jax.vmap(jax.jit(find_face_index))(sorted_edge_0)
+        face_idx_1 = jax.vmap(jax.jit(find_face_index))(sorted_edge_1)
+        face_idx_2 = jax.vmap(jax.jit(find_face_index))(sorted_edge_2)
         
         # Stack into result
         self.face_connectivity = jnp.stack([face_idx_0, face_idx_1, face_idx_2], axis=1)
@@ -154,7 +168,7 @@ class Mesh:
 ################     Boundary conditions    #######################
 ###################################################################
     
-    def set_periodic_BC(self, tol=1e-6):
+    def set_periodic_BC(self, tol=1e-8):
         # Domain bounds
         x_min, x_max = self.points[:, 0].min(), self.points[:, 0].max()
         y_min, y_max = self.points[:, 1].min(), self.points[:, 1].max()
@@ -228,13 +242,22 @@ class Mesh:
     def plot_contour_solution(self, field_data, *args, **kwargs):
         plot.plot_contour_solution(self, field_data, *args, **kwargs)
 
-    def animate_field(self, field_sequence, interval=100):
-        plot.animate_solution(self, field_sequence, interval=interval)
+    def animate_field(self, field_sequence, path = "animation.gif", interval=100):
+        plot.animate_solution(self, field_sequence, path = path, interval=interval)
+
+    def plot_slice(self, X, y = 0.5, n = 1000, labels = r'$\rho$'):
+        out, slice = plot.getSliceinMesh(X, self, y = y, n = n)
+        fig, ax = plt.subplots()
+        ax.plot(slice[...,0], out)
+        ax.grid()
+        ax.set_xlabel(r'$x$')
+        ax.set_ylabel(labels)
 
 
+if __name__ == "__main__":
+    mesh = Mesh()
+    mesh.mesh_generator(maxV=1e-6, marker_boundary=1)
+    mesh.plot_mesh()
 
-# mesh = Mesh()
-# mesh.mesh_generator(maxV=2e-4, marker_boundary=1)
-# mesh.plot_mesh()
 
 

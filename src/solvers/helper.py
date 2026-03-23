@@ -77,16 +77,27 @@ def getConserved_from_Entropy(ETA, gamma = 1.4):
 
 def getgradientLSQ(W_L, W_R, mesh):
 	Delta_x = mesh.barycenter[mesh.neighbors] - mesh.barycenter[...,None,:]  # (N_cells, 3, 2)
+	
 	replace = jnp.mean(mesh.points[mesh.faces[mesh.face_connectivity]], axis = -2)
 	replace = 2 * (replace - mesh.barycenter[...,None,:]) # trick in case the face is on the boundary = use face midpoint instead of neighbor cell center
+	
 	Delta_x = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] > 0)[...,None], 2, axis=-1), replace, Delta_x)
 
 	Delta_w = W_R - W_L
+	weights = 1 / jnp.linalg.norm(Delta_x, axis = -1)**2  # (N_cells, 3)
+	# weights = jnp.ones_like(weights)  # uniform weights --- IGNORE ---
 
-	A = jnp.einsum('ijk,ijl->ikl', Delta_x, Delta_x)  # (N_cells, 2, 2)
-	b = jnp.einsum('ijk,ijl->ikl', Delta_w, Delta_x)  # (N_cells, 2, N_vars)
+	A = jnp.einsum('ijk,ijl->ikl', weights[...,None] * Delta_x, Delta_x)  # (N_cells, 2, 2)
+
+	b = jnp.einsum('ijk,ijl->ikl',  weights[...,None] * Delta_w, Delta_x)  # (N_cells, 2, N_vars)
 
 	grad = jax.vmap(jax.vmap(jnp.linalg.solve))(jnp.repeat(A[:,None,...], b.shape[-2], axis=-3), b)  # (N_cells, 2, N_vars)
+	return grad
+
+
+def gradient_GG(W_L, W_R, mesh):
+	surfaces = mesh.surface[mesh.face_connectivity]  # (N_cells, 3)
+	grad = jnp.sum(0.5 * (W_R + W_L)[...,None] * mesh.normals[...,None,:] * surfaces[...,None,None], axis=-3) / mesh.area[...,None,None]  # (N_cells, N_vars, 2)
 	return grad
 
 ###########################################################################################################
