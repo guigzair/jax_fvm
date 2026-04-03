@@ -168,7 +168,9 @@ class Mesh:
 ################     Boundary conditions    #######################
 ###################################################################
     
-    def set_periodic_BC(self, tol=1e-8):
+    def set_periodic_BC(self, tol=3e-7):
+        if self.points.dtype == jnp.float64:
+            tol = 1e-12
         # Domain bounds
         x_min, x_max = self.points[:, 0].min(), self.points[:, 0].max()
         y_min, y_max = self.points[:, 1].min(), self.points[:, 1].max()
@@ -206,7 +208,7 @@ class Mesh:
         )
 
         # One point must match
-        id_f_opposite = jnp.where((jnp.sum(dist == 0, axis = -1) == 2) | (jnp.sum(dist_shifted == 0, axis = -1) == 2))[1]
+        id_f_opposite = jnp.where((jnp.sum(dist < tol, axis = -1) == 2) | (jnp.sum(dist_shifted < tol, axis = -1) == 2))[1]
 
         # update neighbors
         for i, boundary_face_id in enumerate(boundary_face_ids):

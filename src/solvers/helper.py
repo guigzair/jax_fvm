@@ -14,7 +14,7 @@ def get_dt_viscous(mesh, CFL = 0.5, nu= 1e-5):
 	dt = jnp.min(CFL * dx_i**2 / nu)
 	return dt
 
-def getConserved(Primitives, gamma = 1.4):
+def getConserved(Primitives, gamma = 1.4, M = 1):
 	rho = Primitives[...,0]
 	u = Primitives[...,1]
 	v = Primitives[...,2]
@@ -22,18 +22,18 @@ def getConserved(Primitives, gamma = 1.4):
 	Mass  = rho
 	Mom_x = rho * u 
 	Mom_y = rho * v 
-	Energy = P/(gamma-1) + 0.5*rho*(u**2 + v**2)
+	Energy = P/((gamma-1) * M**2) + 0.5*rho*(u**2 + v**2)
 	W = jnp.stack([Mass, Mom_x, Mom_y, Energy], axis = -1)
 	return W
 
-def getPrimitive(W, gamma = 1.4):
+def getPrimitive(W, gamma = 1.4, M = 1):
 	rho = W[...,0]
 	Mom_x = W[...,1]
 	Mom_y = W[...,2]
 	Energy = W[...,3]
 	u = Mom_x / rho 
 	v = Mom_y / rho 
-	P = (Energy - 0.5*rho * (u**2 + v**2)) * (gamma-1)
+	P = (Energy - 0.5*rho * (u**2 + v**2)) * M**2 * (gamma-1)
 	Primitives = jnp.stack([rho, u, v, P], axis = -1)
 	return Primitives
 
@@ -74,6 +74,54 @@ def getConserved_from_Entropy(ETA, gamma = 1.4):
 	E = P/(gamma-1) + 0.5*rho*(u**2 + v**2)
 	W = jnp.stack([rho, rho * u, rho * v, E], axis=-1)
 	return W
+
+def get_IsmailRoe_variables(W, gamma = 1.4):
+	rho = W[...,0]
+	u = W[...,1] / rho
+	v = W[...,2] / rho
+	E = W[...,3]
+	P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)
+	V1 = jnp.ones_like(u)
+	V2 = u
+	V3 = v
+	V4 = P
+	V = jnp.sqrt(rho/P)[...,None] * jnp.stack([V1, V2, V3, V4], axis=-1)
+	return V
+
+def get_Roe_averaged_state(W_L, W_R, gamma = 1.4):
+	rho_L = W_L[...,0]
+	rho_L = jnp.where(rho_L <= 0, 1e-6, rho_L)  # Avoid division by zero or negative density
+	u_L = W_L[...,1] / rho_L
+	v_L = W_L[...,2] / rho_L
+	E_L = W_L[...,3]
+	P_L = (E_L - 0.5*rho_L * (u_L**2 + v_L**2)) * (gamma-1)
+	P_L = jnp.where(P_L <= 0, 1e-6, P_L)  # Avoid negative pressure
+
+	rho_R = W_R[...,0]
+	rho_R = jnp.where(rho_R <= 0, 1e-6, rho_R)  # Avoid division by zero or negative density
+	u_R = W_R[...,1] / rho_R
+	v_R = W_R[...,2] / rho_R
+	E_R = W_R[...,3]
+	P_R = (E_R - 0.5*rho_R * (u_R**2 + v_R**2)) * (gamma-1)
+	P_R = jnp.where(P_R <= 0, 1e-6, P_R)  # Avoid negative pressure
+
+	sqrt_rho_L = jnp.sqrt(rho_L)
+	sqrt_rho_R = jnp.sqrt(rho_R)
+	rho_avg = sqrt_rho_L * sqrt_rho_R
+	u_avg = (sqrt_rho_L * u_L + sqrt_rho_R * u_R) / (sqrt_rho_L + sqrt_rho_R)
+	v_avg = (sqrt_rho_L * v_L + sqrt_rho_R * v_R) / (sqrt_rho_L + sqrt_rho_R)
+	H_L = (E_L + P_L) / rho_L
+	H_R = (E_R + P_R) / rho_R
+	H_avg = (sqrt_rho_L * H_L + sqrt_rho_R * H_R) / (sqrt_rho_L + sqrt_rho_R)
+	Roe = jnp.stack([rho_avg, u_avg, v_avg, H_avg], axis=-1)
+	return Roe
+
+
+
+###########################################################################################################
+##############################                Gradient                 ######################################
+###########################################################################################################
+
 
 def getgradientLSQ(W_L, W_R, mesh):
 	Delta_x = mesh.barycenter[mesh.neighbors] - mesh.barycenter[...,None,:]  # (N_cells, 3, 2)
