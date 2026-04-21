@@ -1,4 +1,6 @@
 *.gif
+*.png
+*.jpg
 
 data/
 

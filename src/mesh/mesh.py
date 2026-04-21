@@ -64,15 +64,16 @@ class Mesh:
         # info is used to create the geometry before passing to create the mesh
         # In the case there is no info, it is only a periodic square
         if info == None:
-            N_maille = int(np.floor(np.sqrt(1/maxV)))
-            boundaries = np.array([[x, 0] for x in np.linspace(0,Lx,N_maille)][:-1])
-            markers  = [marker_boundary ] * (N_maille - 1)
-            boundaries = np.concatenate([boundaries, np.array([[Lx, y] for y in np.linspace(0,Ly,N_maille)][:-1])])
-            markers.extend([marker_boundary] * (N_maille - 1))
-            boundaries = np.concatenate([boundaries, np.array([[x, Ly] for x in np.linspace(Ly,0,N_maille)][:-1])])
-            markers.extend([marker_boundary] * (N_maille - 1))
-            boundaries = np.concatenate([boundaries, np.array([[0, y] for y in np.linspace(Lx,0,N_maille)][:-1])])
-            markers.extend([marker_boundary] * (N_maille-1))
+            N_maille_x = int(np.floor(np.sqrt(1/maxV)) * Lx / max(Lx, Ly))
+            N_maille_y = int(np.floor(np.sqrt(1/maxV)) * Ly / max(Lx, Ly))
+            boundaries = np.array([[x, 0] for x in np.linspace(0,Lx,N_maille_x)][:-1])
+            markers  = [marker_boundary ] * (N_maille_x - 1)
+            boundaries = np.concatenate([boundaries, np.array([[Lx, y] for y in np.linspace(0,Ly,N_maille_y)][:-1])])
+            markers.extend([marker_boundary] * (N_maille_y - 1))
+            boundaries = np.concatenate([boundaries, np.array([[x, Ly] for x in np.linspace(Lx,0,N_maille_x)][:-1])])
+            markers.extend([marker_boundary] * (N_maille_x - 1))
+            boundaries = np.concatenate([boundaries, np.array([[0, y] for y in np.linspace(Ly,0,N_maille_y)][:-1])])
+            markers.extend([marker_boundary] * (N_maille_y-1))
 
             info = triangle.MeshInfo()
             info.set_points(boundaries)
@@ -95,6 +96,7 @@ class Mesh:
         self.getSurface()
         self.getNormals()
         self.get_face_connectivity()
+        self.face_connectivity_opposite = self.face_connectivity.copy() 
         self.set_periodic_BC() # For periodic BCs, to ensure that neighbors are correctly set, (-1 by default)
 
         # BC by default
@@ -215,6 +217,10 @@ class Mesh:
             id_tri = jnp.where(boundary_face_id == self.face_connectivity)[0]
             id_opposite_tri = jnp.where(boundary_face_ids[id_f_opposite[i]] == self.face_connectivity)[0]
             self.neighbors = self.neighbors.at[id_tri,jnp.where(self.face_connectivity[id_tri] == boundary_face_id)[1]].set(id_opposite_tri)
+        
+        # knowing a face on edge, it get the corresponding face on the opposite edge
+        self.face_connectivity_opposite = jnp.arange(self.faces.shape[0])  # (N_faces,) initialized to identity
+        self.face_connectivity_opposite = self.face_connectivity_opposite.at[boundary_face_ids].set(boundary_face_ids[id_f_opposite])
 
 ###################################################################
 ###################     mesh vtk     ##############################
@@ -258,8 +264,6 @@ class Mesh:
 
 if __name__ == "__main__":
     mesh = Mesh()
-    mesh.mesh_generator(maxV=1e-6, marker_boundary=1)
+    mesh.mesh_generator(maxV=1e-2, marker_boundary=1)
     mesh.plot_mesh()
-
-
 

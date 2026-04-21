@@ -1,3 +1,5 @@
+from webbrowser import get
+
 import jax.numpy as jnp
 import jax
 import sys
@@ -46,7 +48,8 @@ def get_specific_entropy(W, gamma = 1.4):
     s = jnp.log(P / rho**gamma)
     return s
 
-def getEntropyVariables(W, gamma = 1.4):
+def getEntropyVariables(W, **kwargs):
+	gamma = kwargs.get('gamma', 1.4)
 	rho = W[...,0]
 	u = W[...,1] / rho
 	v = W[...,2] / rho
@@ -60,7 +63,8 @@ def getEntropyVariables(W, gamma = 1.4):
 	V = jnp.stack([V1, V2, V3, V4], axis=-1)
 	return V
 
-def getConserved_from_Entropy(ETA, gamma = 1.4):
+def getConserved_from_Entropy(ETA, **kwargs):
+	gamma = kwargs.get('gamma', 1.4)
 	eta1 = ETA[...,0]
 	eta2 = ETA[...,1]
 	eta3 = ETA[...,2]
@@ -184,6 +188,16 @@ def BC_slipwall(W_R, W_L, mesh, bc_type = 2, value = jnp.array([0., 0., 0., 0.])
 	vb = (Prim_L[...,1:3] - value[1:3]) - 2 * vn[...,None] * mesh.normals
 	Prim_b = Prim_L.at[...,1:3].set(vb + value[1:3])
 	W_b = getConserved(Prim_b)
+	W_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] == bc_type)[...,None], 4, axis=-1), W_b, W_R)
+	return W_R	
+
+def BC_slipwall_entropic(W_R, W_L, mesh, bc_type = 2, value = jnp.array([0., 0., 0., 0.])):
+	Eta_L = getEntropyVariables(W_L)
+
+	vn = (Eta_L[...,1] - value[1]) * mesh.normals[...,0] + (Eta_L[...,2] - value[2]) * mesh.normals[...,1]
+	vb = (Eta_L[...,1:3] - value[1:3]) - 2 * vn[...,None] * mesh.normals
+	Eta_b = Eta_L.at[...,1:3].set(vb + value[1:3])
+	W_b = getConserved_from_Entropy(Eta_b)
 	W_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] == bc_type)[...,None], 4, axis=-1), W_b, W_R)
 	return W_R	
 

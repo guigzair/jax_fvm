@@ -193,13 +193,12 @@ class TestDipoleVortex2():
             return p
         
         u, v = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
-        E_0 = jnp.mean(0.5 * (u**2 + v**2))
-        U_0 = jnp.sqrt(E_0/2)
         p_0 = 1 / (1.4 * self.mach**2) #U_0 ** 2 * self.rho_0 / (1.4 * self.mach**2)
-        p = p_0
+        p = p_0 - pressure_field()
+        rho = self.rho_0 * (p / p_0)**(1/1.4)
         
         Primitives = jnp.zeros((N, 4))
-        Primitives = Primitives.at[...,0].set(self.rho_0 )
+        Primitives = Primitives.at[...,0].set(rho)
         Primitives = Primitives.at[...,1].set(u)
         Primitives = Primitives.at[...,2].set(v )
         Primitives = Primitives.at[...,3].set(p )
