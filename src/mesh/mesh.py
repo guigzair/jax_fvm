@@ -6,6 +6,7 @@ import numpy as np
 sys.path.append('../../..')  
 import jax_fvm.src.mesh.plot as plot
 import jax
+from scipy.spatial import Delaunay
 
 import matplotlib.pyplot as plt
 size = 14
@@ -59,21 +60,25 @@ class Mesh:
         result.append((end, start))
         return result
 
-    def mesh_generator(self, info = None, maxV = 5e-3, Lx = 1., Ly = 1.,
+    def mesh_generator(self, info = None, maxV = 5e-3, 
+                       x_min = 0., x_max = 1., y_min = 0., y_max = 1.,
 					    min_angle = 30, marker_boundary = 1):
         # info is used to create the geometry before passing to create the mesh
         # In the case there is no info, it is only a periodic square
         if info == None:
-            N_maille_x = int(np.floor(np.sqrt(1/maxV)) * Lx / max(Lx, Ly))
-            N_maille_y = int(np.floor(np.sqrt(1/maxV)) * Ly / max(Lx, Ly))
-            boundaries = np.array([[x, 0] for x in np.linspace(0,Lx,N_maille_x)][:-1])
+            Lx = x_max - x_min
+            Ly = y_max - y_min
+            N_maille_x = 2 * int(np.floor(np.sqrt(1/maxV)) * Lx / Ly)
+            N_maille_y = 2 * int(np.floor(np.sqrt(1/maxV)) * Ly / Ly)
+
+            boundaries = np.array([[x, y_min] for x in np.linspace(x_min, x_max, N_maille_x)][:-1])
             markers  = [marker_boundary ] * (N_maille_x - 1)
-            boundaries = np.concatenate([boundaries, np.array([[Lx, y] for y in np.linspace(0,Ly,N_maille_y)][:-1])])
+            boundaries = np.concatenate([boundaries, np.array([[x_max, y] for y in np.linspace(y_min, y_max, N_maille_y)][:-1])])
             markers.extend([marker_boundary] * (N_maille_y - 1))
-            boundaries = np.concatenate([boundaries, np.array([[x, Ly] for x in np.linspace(Lx,0,N_maille_x)][:-1])])
+            boundaries = np.concatenate([boundaries, np.array([[x, y_max] for x in np.linspace(x_max, x_min, N_maille_x)][:-1])])
             markers.extend([marker_boundary] * (N_maille_x - 1))
-            boundaries = np.concatenate([boundaries, np.array([[0, y] for y in np.linspace(Ly,0,N_maille_y)][:-1])])
-            markers.extend([marker_boundary] * (N_maille_y-1))
+            boundaries = np.concatenate([boundaries, np.array([[x_min, y] for y in np.linspace(y_max, y_min, N_maille_y)][:-1])])
+            markers.extend([marker_boundary] * (N_maille_y - 1))
 
             info = triangle.MeshInfo()
             info.set_points(boundaries)
@@ -98,6 +103,27 @@ class Mesh:
         self.get_face_connectivity()
         self.face_connectivity_opposite = self.face_connectivity.copy() 
         self.set_periodic_BC() # For periodic BCs, to ensure that neighbors are correctly set, (-1 by default)
+
+        # BC by default
+        self.inlet_supersonic = jnp.array([1.0, 1.0, 0.0, 1.0])  # rho, u, v, P
+        self.inlet_subsonic = jnp.array([1.0, 1., 0.0, 1.0])  # rho, u, v, P
+
+    def mesh_generator_from_points(self, mesh_points, mesh_tris, mesh_tris_neighbors, mesh_facets, mesh_face_markers):
+        self.points = jnp.array(mesh_points)
+        self.tris = jnp.array(mesh_tris)
+        self.neighbors = jnp.array(mesh_tris_neighbors)  # For neighbors stuff, each side with v0-V1 is next to neighbor 0
+        self.faces = jnp.array(mesh_facets)
+        self.face_markers = jnp.array(mesh_face_markers)
+
+        self.field_data = jnp.zeros_like(self.points[:,0])
+
+        self.getCenterTriangles()
+        self.getArea()
+        self.getSurface()
+        self.getNormals()
+        self.get_face_connectivity()
+        self.face_connectivity_opposite = self.face_connectivity.copy() 
+        self.set_periodic_BC() 
 
         # BC by default
         self.inlet_supersonic = jnp.array([1.0, 1.0, 0.0, 1.0])  # rho, u, v, P
@@ -172,7 +198,7 @@ class Mesh:
     
     def set_periodic_BC(self, tol=3e-7):
         if self.points.dtype == jnp.float64:
-            tol = 1e-12
+            tol = 1e-10
         # Domain bounds
         x_min, x_max = self.points[:, 0].min(), self.points[:, 0].max()
         y_min, y_max = self.points[:, 1].min(), self.points[:, 1].max()
@@ -264,6 +290,8 @@ class Mesh:
 
 if __name__ == "__main__":
     mesh = Mesh()
-    mesh.mesh_generator(maxV=1e-2, marker_boundary=1)
+    mesh.mesh_generator(maxV=1e-2, marker_boundary=1, x_min=-1., x_max=1., y_min=-1, y_max=1.)
     mesh.plot_mesh()
+
+
 

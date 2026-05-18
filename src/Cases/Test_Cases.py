@@ -269,7 +269,56 @@ class TestMovingAdvection():
         Primitives = Primitives.at[...,3].set(1.)
         return Primitives
     
+class TaylorGreenVortex():
+    def __init__(self, V_0 = 2., M = 0.1):
+        self.V_0 = V_0
+        self.M = M
+
+    def build(self, mesh):
+        N = len(mesh.area)
+        L = jnp.max(mesh.points[...,0]) - jnp.min(mesh.points[...,0])
+
+        def velocity_field(x, y):
+            u =  - self.V_0 *  jnp.sin(2 * jnp.pi * x / L) * jnp.cos(2 * jnp.pi * y / L)
+            v =  self.V_0 * jnp.cos(2 * jnp.pi * x / L) * jnp.sin(2 * jnp.pi * y / L)
+            p_0 = self.V_0**2 / (1.4 * self.M**2) # assuming U_0 = 1
+            p = p_0 + self.V_0**2 / 16 * (jnp.cos(4 * jnp.pi * x / L) + jnp.cos(4 * jnp.pi * y / L))
+            rho = p/p_0
+            return rho, u, v , p
+        
+        Primitives = jnp.zeros((N, 4))
+        rho, u, v, p = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
+        Primitives = Primitives.at[...,0].set(rho)
+        Primitives = Primitives.at[...,1].set(u)
+        Primitives = Primitives.at[...,2].set(v)
+        Primitives = Primitives.at[...,3].set(p)
+        return Primitives
     
+class KevinHelmotzInstability():
+    def __init__(self, sigma = 1., alpha = 1.):
+        self.sigma = sigma
+        self.alpha = alpha
+
+    def build(self, mesh):
+        N = len(mesh.area)
+
+        def velocity_field(x, y):
+            # rho = jnp.where(jnp.logical_and(y > 0.25, y < 0.75), 2., 1.)
+            # u = jnp.where(jnp.logical_and(y > 0.25, y < 0.75), 0.5, -0.5)
+            # v = self.alpha * jnp.sin(4 * jnp.pi * y) * (jnp.exp(- (y - 0.25)**2/(self.sigma**2)) + jnp.exp(- (y - 0.75)**2/(self.sigma**2)))
+            rho = 1 + 1/ (1 + jnp.exp(- (y - 0.25)/self.sigma**2)) - 1/ (1 + jnp.exp(- (y - 0.75)/self.sigma**2))
+            u = 1/ (1 + jnp.exp(- (y - 0.25)/self.sigma**2)) - 1/ (1 + jnp.exp(- (y - 0.75)/self.sigma**2)) - 1/2
+            v = self.alpha * jnp.sin(2 * jnp.pi * 2 * (x - 0.5)) * (jnp.exp(- 2 * (y - 0.25)**2/(self.sigma**2)) - jnp.exp(- 2 * (y - 0.75)**2/(self.sigma**2)))
+            p = 2.5
+            return rho, u, v , p
+        
+        Primitives = jnp.zeros((N, 4))
+        rho, u, v, p = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
+        Primitives = Primitives.at[...,0].set(rho)
+        Primitives = Primitives.at[...,1].set(u)
+        Primitives = Primitives.at[...,2].set(v)
+        Primitives = Primitives.at[...,3].set(p)
+        return Primitives
 
 
 ##########################################################
@@ -492,22 +541,22 @@ def Test19():
 ##########################################################################
 
 
-class TaylorGreenVortex():
-    def build(self, mesh):
-        N = len(mesh.area)
-        L = jnp.max(mesh.points[...,0]) - jnp.min(mesh.points[...,0])
+# class TaylorGreenVortex():
+#     def build(self, mesh):
+#         N = len(mesh.area)
+#         L = jnp.max(mesh.points[...,0]) - jnp.min(mesh.points[...,0])
 
-        def velocity_field(x, y):
-            u =  - jnp.sin(2 * jnp.pi * x / L) * jnp.cos(2 * jnp.pi * y / L)
-            v =    jnp.cos(2 * jnp.pi * x / L) * jnp.sin(2 * jnp.pi * y / L)
-            return u, v
+#         def velocity_field(x, y):
+#             u =  - jnp.sin(2 * jnp.pi * x / L) * jnp.cos(2 * jnp.pi * y / L)
+#             v =    jnp.cos(2 * jnp.pi * x / L) * jnp.sin(2 * jnp.pi * y / L)
+#             return u, v
 
 
-        Primitives = jnp.zeros((N, 2))
-        u, v = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
-        Primitives = Primitives.at[...,0].set(u)
-        Primitives = Primitives.at[...,1].set(v)
-        return Primitives
+#         Primitives = jnp.zeros((N, 2))
+#         u, v = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
+#         Primitives = Primitives.at[...,0].set(u)
+#         Primitives = Primitives.at[...,1].set(v)
+#         return Primitives
     
 class advected_sinus():
     def build(self, mesh, u = 1., v = 0., p = 1):

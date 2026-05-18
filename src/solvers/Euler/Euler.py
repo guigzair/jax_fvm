@@ -10,7 +10,7 @@ import jax_fvm.src.mesh.Mesh_cases as Mesh_cases # pyright: ignore[reportMissing
 import time
 import jax_fvm.src.solvers.helper as helper # pyright: ignore[reportMissingImports]
 import matplotlib.pyplot as plt
-jax.config.update('jax_enable_x64', True)
+# jax.config.update('jax_enable_x64', True)
 jax.config.update("jax_debug_nans", True)
 size = 14
 params = {
@@ -340,6 +340,8 @@ def residual(W, mesh, **kwargs):
 	Flux = getFlux_Tadmor(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
 	return Flux / mesh.area[...,None] 
 
+
+
 @jax.jit(static_argnums=(1,))
 def time_step_RK2(W, mesh, dt, **kwargs):
 	F1 = residual(W, mesh, **kwargs)
@@ -412,34 +414,37 @@ def SDIRK2(W, mesh, dt, **kwargs):
 
 
 if __name__ == "__main__":
-	mesh = Mesh_cases.TestDipoleVortex().build(h = 8e-6, L = 1.)
-	Primitives, mesh = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
+	# mesh = Mesh_cases.TestDipoleVortex().build(h = 5e-5, L = 1.)
+	# Primitives, mesh = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
 
 	# mesh = Mesh_cases.Forward_Step().build(h = 2e-5)
 	# Primitives = Test_Cases.ForwardFacingStep().build(mesh)
 
 	# mesh = Mesh()
-	# mesh.mesh_generator(maxV = 5e-5, marker_boundary=2, Lx = 0.5, Ly = 1)
+	# mesh.mesh_generator(maxV = 5e-5, marker_boundary=2, x_min=0., x_max = 0.5, y_min = 0., y_max = 1.)
 	# Primitives, _ = Test_Cases.TestDipoleVortex2(R = 0.1, omega = 300, mach = 0.01).build(mesh)
 	# Primitives = Test_Cases.advected_sinus().build(mesh, u = 1, v = 1)
+
+	mesh = Mesh_cases.UniformMesh(Nx=150, Ny=150, Lx=1.0, Ly=1.0).build()
+	Primitives = Test_Cases.KevinHelmotzInstability(sigma =  0.1, alpha = 0.1).build(mesh)
 
 	# Prim_ref = jnp.array([1., 1., 1., 1 / 0.01**2])
 	# Primitives = Primitives / Prim_ref
 
-	kwargs = {'gamma': 1.4, 'alpha': 0.1, 'M': 1.}
+	kwargs = {'gamma': 1.4, 'alpha': 1., 'M': 1.}
 
 	W = helper.getConserved(Primitives, gamma = kwargs['gamma'], M = kwargs['M'])
 	mesh.plot_mesh()
 
 	# Time loop
-	t_final = 0.2
+	t_final = 1.5
 	CFL = 0.4
 	dt = helper.get_dt(W, mesh, CFL = CFL)
 	N_t = int(t_final / dt) + 1
 
 	start_time = time.time()
 
-	T_interval_snapshots = 2000
+	T_interval_snapshots = 100
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
 		W = time_step_RK2(W, mesh, dt, **kwargs)
@@ -457,6 +462,7 @@ if __name__ == "__main__":
 	# Plot solution
 	Primitives = helper.getPrimitive(W, gamma = kwargs['gamma'], M = kwargs['M'])
 	mesh.plot_solution(Primitives[...,0], labels = r'$\rho$')
+	mesh.plot_solution(Primitives[...,1], labels = r'$u$')
 
 	# vorticity
 	vorticity = helper.get_vorticity_from_field(W, mesh)

@@ -2,9 +2,12 @@ import jax.numpy as jnp
 import numpy as np
 import jax
 import sys
+
+from scipy.datasets import face
 sys.path.append('../../..')  
 from jax_fvm.src.mesh.mesh import Mesh 
 import meshpy.triangle as triangle
+from scipy.spatial import Delaunay
 
 
 # Forward facing step 
@@ -52,27 +55,62 @@ class TestDipoleVortex():
         return mesh
     
 
-class TestMovingVortex():
-    def build(self, h = 1e-3, L = 0.1):
+class UniformMesh():
+    def __init__(self, Nx=10, Ny=10, Lx=1.0, Ly=1.0):
+        self.Nx = Nx
+        self.Ny = Ny
+        self.Lx = Lx
+        self.Ly = Ly
+
+    def build(self):
         mesh = Mesh()
-        L = L
 
-        N_maille = int(np.floor(L * np.sqrt(1/h)))
-        boundaries = np.array([[x, 0] for x in np.linspace(0,L,N_maille)][:-1])
-        markers  = [1] * (N_maille - 1)
-        boundaries = np.concatenate([boundaries, np.array([[L, y] for y in np.linspace(0,L,N_maille)][:-1])])
-        markers.extend([1] * (N_maille - 1))
-        boundaries = np.concatenate([boundaries, np.array([[x, L] for x in np.linspace(L,0,N_maille)][:-1])])
-        markers.extend([1] * (N_maille - 1))
-        boundaries = np.concatenate([boundaries, np.array([[ 0, y] for y in np.linspace(L,0,N_maille)][:-1])])
-        markers.extend([1] * (N_maille-1))
+        Lx = self.Lx
+        Ly = self.Ly
+        Nx = self.Nx
+        Ny = self.Ny
+        dx = Lx / Nx
+        dy = Ly / Ny
 
-        info = triangle.MeshInfo()
-        info.set_points(boundaries)
-        info.set_facets(mesh.round_trip_connect(0, len(boundaries)-1), facet_markers=markers)
+        # Generate point cloud
+        x = np.linspace(0, Lx, Nx)
+        y = np.linspace(0, Ly, Ny)  
+        X, Y = np.meshgrid(x, y)
+        points = np.c_[X.ravel(), Y.ravel()]
 
-        mesh.mesh_generator(info = info, maxV=h)
+        # to have squares divided in 4 triangles, we need to add points at the center of each square
+        x = np.linspace(0 + dx/2 , 1. - dx/2, Nx-1)
+        y = np.linspace(0 + dy/2 , 1. - dy/2, Ny-1) 
+        X, Y = np.meshgrid(x, y)
+        points = np.concatenate([points, np.c_[X.ravel(), Y.ravel()]])
+
+        # Generate triangulation
+        tri = Delaunay(points)
+
+        mesh_tris = jnp.array(tri.simplices, dtype=jnp.int32)
+        mesh_points = jnp.array(tri.points, dtype=jnp.float32)
+        mesh_tris_neighbors = jnp.array(tri.neighbors, dtype=jnp.int32)
+
+        # Define boundary facets and markers
+        face_1 = jnp.stack((tri.simplices[:, 0], tri.simplices[:, 1]), axis=-1)
+        face_2 = jnp.stack((tri.simplices[:, 1], tri.simplices[:, 2]), axis=-1)
+        face_3 = jnp.stack((tri.simplices[:, 2], tri.simplices[:, 0]), axis=-1)
+        faces = jnp.concatenate((face_1, face_2, face_3), axis=0)
+        mesh_tris_neighbors = jnp.roll(jnp.array(mesh_tris_neighbors), 1, axis=-1)
+        face_markers = jnp.where(mesh_tris_neighbors == -1, 1, 0)
+        face_markers = jnp.concatenate((face_markers[:, 0], face_markers[:, 1], face_markers[:, 2]), axis=0)
+
+        faces = jnp.sort(faces, axis=-1)
+        faces, indices = jnp.unique(faces, axis=0, return_index=True)
+        faces_markers = face_markers[indices]
+
+        mesh.mesh_generator_from_points(mesh_points, mesh_tris, mesh_tris_neighbors, faces, faces_markers)
         return mesh
-    
+
+
+if __name__ == "__main__":
+    mesh = UniformMesh(Nx=15, Ny=15, Lx=1.0, Ly=1.0).build()
+    mesh.plot_mesh()
+
 
 
