@@ -25,4 +25,5 @@ The project is built using :
 - jax-12 for GPUs
 - [Meshpy](https://github.com/inducer/meshpy)
 - [Meshio](https://github.com/nschloe/meshio)
+- Latex for images outputs
 

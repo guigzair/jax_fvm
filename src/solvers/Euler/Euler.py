@@ -341,7 +341,6 @@ def residual(W, mesh, **kwargs):
 	return Flux / mesh.area[...,None] 
 
 
-
 @jax.jit(static_argnums=(1,))
 def time_step_RK2(W, mesh, dt, **kwargs):
 	F1 = residual(W, mesh, **kwargs)
