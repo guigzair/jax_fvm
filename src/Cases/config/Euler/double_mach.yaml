@@ -1,0 +1,19 @@
+name: double_mach
+mesh:
+  type: double_mach 
+  params:
+    maxV: 2.e-5
+kwargs:
+  gamma: 1.4
+  mu: 1.716e-4
+  R: 287
+  k: 0.30780
+  flag_NS: False
+  alpha: 1.
+  order: 2
+initial_condition:
+  type: double_mach
+time:
+  cfl: 0.2
+  t_end: 0.2
+  scheme: rk2

@@ -1,9 +1,11 @@
 name: kelvin_helmholtz
 mesh:
-  type: None 
-  maxV: 1.0e-4
-  marker_boundary: 2
-  bounds: [0., 1., 0., 1.]
+  type: UniformMesh 
+  params:
+    Nx: 175
+    Ny: 175
+    Lx: 1.0
+    Ly: 1.0
 kwargs:
   gamma: 1.4
   mu: 1.716e-4
@@ -11,6 +13,7 @@ kwargs:
   k: 0.30780
   flag_NS: False
   alpha: 1.
+  order: 1
 initial_condition:
   type: kelvin_helmholtz
   params:

@@ -110,6 +110,23 @@ class UniformMesh():
         mesh.mesh_generator_from_points(mesh_points, mesh_tris, mesh_tris_neighbors, faces, faces_markers)
         return mesh
 
+class Double_Mach_Reflection():
+    def __init__(self, maxV = 8e-5):
+        self.maxV = maxV
+
+    def build(self):
+        mesh = Mesh()
+
+        boundaries = [[0,0],[0.5, 0.],[3,1.5],[3,2.],[0,2.]]
+        markers = [2, 2, 4, 4, 4]
+        facets = mesh.round_trip_connect(0, len(boundaries) - 1)
+        info = triangle.MeshInfo()
+        info.set_points(boundaries)
+        info.set_facets(facets, facet_markers=markers)
+
+        mesh.mesh_generator(info, maxV=self.maxV)
+
+        return mesh
 
 if __name__ == "__main__":
     mesh = UniformMesh(Nx=15, Ny=15, Lx=1.0, Ly=1.0).build()

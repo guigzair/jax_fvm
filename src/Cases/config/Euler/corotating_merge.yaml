@@ -19,7 +19,7 @@ initial_condition:
     D0: 0.5
     center: [0., 0.]
     Mach: 0.02
-    window: False
+    window: True
   # params:
   #   R: 0.1
   #   omega: 2.
@@ -28,5 +28,5 @@ initial_condition:
   #   D0: 0.15
 time:
   cfl: 0.4
-  t_end: 1.5
+  t_end: 1.
   scheme: rk2

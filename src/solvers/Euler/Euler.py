@@ -2,9 +2,10 @@ import jax.numpy as jnp
 import jax
 import sys
 
-sys.path.append('../../../..')  
+sys.path.append('../../../..')
 from jax_fvm.src.config import Case
 from jax_fvm.src.mesh.mesh import Mesh 
+import  jax_fvm.src.Cases.Test_Cases as Test_Cases
 import jax_fvm.src.solvers.Time_Integration as TimeIntegration
 import time
 import jax_fvm.src.solvers.helper as helper 
@@ -326,15 +327,22 @@ def residual(W, mesh, **kwargs):
 	# 2nd order - MUSCL with least-square gradient
 	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
 
-	W_L = helper.getPrimitive(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
-	W_R = helper.getPrimitive(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
-	grad = helper.getgradientLSQ(W_L, W_R, mesh)
-	W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
-	W_L = helper.getConserved(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
-	W_R = helper.getConserved(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
+	def second_order_branch(W_L, W_R):
+		W_L = helper.getPrimitive(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
+		W_R = helper.getPrimitive(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
+		grad = helper.getgradientLSQ(W_L, W_R, mesh)
+		W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
+		W_L = helper.getConserved(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
+		W_R = helper.getConserved(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 
-	Flux = getFlux_Tadmor(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
-	
+		Flux = getFlux_Tadmor(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
+		return Flux
+    
+	def first_order_branch(W_L, W_R):
+		Flux = getFlux_Tadmor(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
+		return Flux
+
+	Flux = jax.lax.cond(kwargs.get('order', 2) == 2, second_order_branch, first_order_branch, W_L, W_R)
 	Flux = mesh.surface[mesh.face_connectivity][...,None] * Flux
 	Flux = jnp.sum(Flux, axis = -2)
 	return Flux / mesh.area[...,None] 
@@ -345,9 +353,11 @@ def residual(W, mesh, **kwargs):
 
 
 if __name__ == "__main__":
-	cfg_path = "../../Cases/config/Euler/corotating_merge.yaml"
-	# cfg_path = "../../Cases/config/KelvinHelmholtz.yaml"
+	# cfg_path = "../../Cases/config/Euler/corotating_merge.yaml"
+	# cfg_path = "../../Cases/config/Euler/KelvinHelmholtz.yaml"
 	# cfg_path = "../../Cases/config/DipoleVortex.yaml"
+	# cfg_path = "../../Cases/config/Euler/double_mach.yaml"
+	cfg_path = "../../Cases/config/Euler/Test.yaml"
 	case = Case.build(cfg_path, MeshClass=Mesh)
 
 	# mesh = Mesh()
@@ -360,9 +370,7 @@ if __name__ == "__main__":
 
 	W = helper.getConserved(case.primitives, gamma = kwargs['gamma'], M = kwargs.get('M', 1.))
 	Primitives = helper.getPrimitive(W, gamma = kwargs['gamma'], M = kwargs.get('M', 1.))
-	case.mesh.plot_solution(Primitives[...,1], labels = r'Initial condition $u$')
 
-	case.mesh.plot_slice(Primitives[...,1], labels = r'$\rho$')
 
 	t_final = case.config.time.t_end
 	dt = helper.get_dt(W, case.mesh, CFL = case.config.time.cfl)
@@ -370,7 +378,7 @@ if __name__ == "__main__":
 
 	start_time = time.time()
 
-	T_interval_snapshots = 1000
+	T_interval_snapshots = 10000
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
 		W = TimeIntegration.time_step_RK2(W, dt, case.mesh, residual, **kwargs)

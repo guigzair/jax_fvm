@@ -15,11 +15,16 @@ SRC_DIR = Path(__file__).resolve().parent
 # ---- registry: string name -> IC class ----
 IC_REGISTRY = {"corotating_merge": Test_Cases.CorotatingVortices,
                "dipole_vortex": Test_Cases.TestDipoleVortex2,
-               "kelvin_helmholtz": Test_Cases.KevinHelmotzInstability}
+               "balanced_dipole_vortex": Test_Cases.BalancedDipoleVortex,
+               "isentropic_vortex": Test_Cases.IsentropicVortex,
+               "kelvin_helmholtz": Test_Cases.KevinHelmotzInstability,
+               "double_mach": Test_Cases.DoubleMachReflection,
+               "test": Test_Cases.Test}
 
 MESH_REGISTRY = {"Forward_Step": Mesh_Cases.Forward_Step,
                "dipole_vortex": Mesh_Cases.TestDipoleVortex,
-               "UniformMesh": Mesh_Cases.UniformMesh}
+               "UniformMesh": Mesh_Cases.UniformMesh,
+               "double_mach": Mesh_Cases.Double_Mach_Reflection}
 
 # PHYSICS_REGISTRY = {"Euler": NS.residual,
 #                     "NS": NS.residual}

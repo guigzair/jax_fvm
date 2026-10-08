@@ -2,7 +2,7 @@ name: dipole_vortex
 mesh:
   type: dipole_vortex 
   params:
-    maxV: 1.e-05
+    maxV: 5.e-05
     L: 1.0
 kwargs:
   gamma: 1.4

@@ -6,10 +6,9 @@ import jax
 
 
 def get_energy(omega_hat, mesh):
-    psi_hat = omega_hat / mesh.k2
-
-    # energy spectrum
-    E_k = 0.5 * (jnp.abs(psi_hat)**2 )
+    # kinetic energy spectrum: 1/2 |u_hat|^2 = 1/2 |omega_hat|^2 / k^2
+    E_k = 0.5 * jnp.abs(omega_hat)**2 / mesh.k2
+    E_k = E_k.at[0,0].set(0.0)
     total_energy = jnp.sum(E_k) * (mesh.L**2 / mesh.N**4) 
     return total_energy
 
@@ -22,20 +21,18 @@ def get_palinstrophy(omega_hat, mesh):
     omega_x_hat = 1j * mesh.kx * omega_hat
     omega_y_hat = 1j * mesh.ky * omega_hat
     palinstrophy_spectrum = 0.5 * (jnp.abs(omega_x_hat)**2 + jnp.abs(omega_y_hat)**2)
-    total_palinstrophy = jnp.sum(palinstrophy_spectrum) * (mesh.L)**2 / (mesh.X.shape[0]**2)
+    total_palinstrophy = jnp.sum(palinstrophy_spectrum) * (mesh.L**2 / mesh.N**4)
     return total_palinstrophy
 
 def get_energy_spectrum(omega_hat, mesh):
-    psi_hat = omega_hat / mesh.k2
-
-    # energy spectrum
-    E_k = 0.5 * (jnp.abs(psi_hat)**2 ).reshape(-1) * (mesh.L**2 / mesh.N**4) 
+    # kinetic energy spectrum: 1/2 |omega_hat|^2 / k^2
+    E_k = 0.5 * jnp.abs(omega_hat)**2 / mesh.k2
+    E_k = E_k.at[0,0].set(0.0).reshape(-1) * (mesh.L**2 / mesh.N**4)
     k_magnitude = jnp.sqrt(mesh.k2).reshape(-1)
     k_bins = jnp.arange(jnp.min(k_magnitude), mesh.N //2 , 1.0)
-    E_k_bin = jnp.zeros_like(k_bins)
-    for i in range(len(k_bins)-1):
-        mask = (k_magnitude >= k_bins[i]) & (k_magnitude < k_bins[i+1])
-        E_k_bin = E_k_bin.at[i].set(jnp.sum(E_k[mask]))
+    # shell binning in one pass: bin i collects k_bins[i] <= |k| < k_bins[i+1]
+    idx = jnp.floor(k_magnitude - k_bins[0]).astype(jnp.int32)
+    E_k_bin = jnp.bincount(idx, weights=E_k, length=len(k_bins))
     return k_bins[:-1], E_k_bin[:-1]
 
 def gaussian_vortex(mesh, x0, y0, r0, omega0):

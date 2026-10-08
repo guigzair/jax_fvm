@@ -25,6 +25,8 @@ def getConserved(Primitives, gamma = 1.4, M = 1):
 	Mom_x = rho * u 
 	Mom_y = rho * v 
 	Energy = P/((gamma-1) * M**2) + 0.5*rho*(u**2 + v**2)
+	Mass  = jnp.where(Mass <= 0, 1e-6, Mass)  # Avoid negative density
+	Energy = jnp.where(Energy <= 0, 1e-6, Energy)  # Avoid negative energy
 	W = jnp.stack([Mass, Mom_x, Mom_y, Energy], axis = -1)
 	return W
 
@@ -36,6 +38,8 @@ def getPrimitive(W, gamma = 1.4, M = 1):
 	u = Mom_x / rho 
 	v = Mom_y / rho 
 	P = (Energy - 0.5*rho * (u**2 + v**2)) * M**2 * (gamma-1)
+	rho = jnp.where(rho <= 0, 1e-6, rho)  # Avoid division by zero or negative density
+	P = jnp.where(P <= 0, 1e-6, P)  # Avoid negative pressure
 	Primitives = jnp.stack([rho, u, v, P], axis = -1)
 	return Primitives
 
@@ -45,16 +49,20 @@ def get_specific_entropy(W, gamma = 1.4):
     v = W[...,2] / rho
     E = W[...,3]
     P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)
+    rho = jnp.where(rho <= 0, 1e-6, rho) 
+    P = jnp.where(P <= 0, 1e-6, P)  
     s = jnp.log(P / rho**gamma)
     return s
 
 def getEntropyVariables(W, **kwargs):
 	gamma = kwargs.get('gamma', 1.4)
 	rho = W[...,0]
+	# rho = jnp.where(rho <= 0, 1e-6, rho) 
 	u = W[...,1] / rho
 	v = W[...,2] / rho
 	E = W[...,3]
-	P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)
+	P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)    
+	P = jnp.where(P <= 0, 1e-6, P)  
 	s = get_specific_entropy(W, gamma = gamma)
 	V1 = (gamma - s) / (gamma - 1) - 0.5 * rho * (u**2 + v**2) / P
 	V2 = W[...,1] / P
@@ -69,6 +77,7 @@ def getConserved_from_Entropy(ETA, **kwargs):
 	eta2 = ETA[...,1]
 	eta3 = ETA[...,2]
 	eta4 = ETA[...,3]
+	eta4 = jnp.where(eta4 >= 0, -1e-6, eta4) 
 
 	u = - eta2 / eta4
 	v = - eta3 / eta4

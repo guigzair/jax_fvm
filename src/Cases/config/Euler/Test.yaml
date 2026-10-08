@@ -1,0 +1,23 @@
+name: test
+mesh:
+  type: None 
+  maxV: 1.e-4
+  marker_boundary: 4
+  bounds: [0., 1., 0., 1.]
+kwargs:
+  gamma: 1.4
+  mu: 1.716e-4
+  R: 287
+  k: 0.30780
+  flag_NS: False
+  alpha: 1.
+  order: 2
+initial_condition:
+  type: test
+  params:
+    test: Test4
+
+time:
+  cfl: 0.4
+  t_end: 0.25
+  scheme: rk2

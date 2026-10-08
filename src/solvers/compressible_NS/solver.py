@@ -160,7 +160,7 @@ def residual(W, mesh, **kwargs):
 	Flux_convective = Euler.getFlux_Tadmor(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
 	
 	# compute diffusive flux based on primitive variable gradients
-	Flux_diffusive = getFlux_diffusive(grad, Prim_L, Prim_R, mesh, **kwargs)
+	Flux_diffusive = getFlux_diffusive2(grad, Prim_L, Prim_R, mesh, **kwargs)
 
 	Flux = Flux_convective - Flux_diffusive
 	Flux = mesh.surface[mesh.face_connectivity][...,None] * Flux

@@ -268,8 +268,9 @@ class Mesh:
         plot.plot_mesh(self)
 
     def plot_solution(self, field_data, *args, **kwargs):
-        plot.plot_solution(self, field_data, *args, **kwargs)
-    
+        fig, ax = plot.plot_solution(self, field_data, *args, **kwargs)
+        return fig, ax
+
     def plot_contour_solution(self, field_data, *args, **kwargs):
         plot.plot_contour_solution(self, field_data, *args, **kwargs)
 

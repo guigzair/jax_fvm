@@ -2,9 +2,7 @@ from jax import P
 import jax.numpy as jnp
 import numpy as np
 import meshpy.triangle as triangle
-from dataclasses import dataclass
 
-from jax_fvm.src.solvers.helper import getConserved
 
 # This file is used to implement all test cases present in lax paper
 # SOLUTION OF TWO-DIMENSIONAL RIEMANN PROBLEMS OF GAS DYNAMICS BY POSITIVE SCHEMES, Lax, Liu, 1998
@@ -89,11 +87,15 @@ class TestDividing():
                 Primitives[i] = self.left
         return Primitives
 
-def DoubleMachReflection():
-    left = jnp.array([8., 8.25, 0, 116.5])
-    # left = jnp.array([1.4, 3., 0, 1.])
-    right = jnp.array([1.4, 0., 0, 1.])
-    return TestDividing(left, right)
+
+class DoubleMachReflection():
+    def build(self, mesh):
+        left = jnp.array([8., 8.25, 0, 116.5])
+        right = jnp.array([1.4, 0., 0, 1.])
+        Primitives = jnp.zeros((len(mesh.area), 4))
+        Primitives = Primitives.at[mesh.barycenter[:,0] < 0.5 ].set(left)
+        Primitives = Primitives.at[mesh.barycenter[:,0] >= 0.5 ].set(right)
+        return Primitives
 
 
 class TestUniform():
@@ -205,6 +207,42 @@ class TestDipoleVortex2():
         Primitives = Primitives.at[...,2].set(v )
         Primitives = Primitives.at[...,3].set(p )
         return Primitives
+
+class BalancedDipoleVortex(TestDipoleVortex2):
+    """ Same dipole as TestDipoleVortex2, but (rho, p) are rebuilt in mechanical equilibrium
+        grad(p) = -rho (u.grad)u by a pressure Poisson solve. The analytical pressure of
+        TestDipoleVortex2 misses the interaction term between the two vortices, so that
+        initial condition radiates an acoustic transient which bounces in the box. """
+    def build(self, mesh):
+        Primitives = super().build(mesh)
+        import jax_fvm.src.solvers.helper as helper
+        return helper.equilibrium_pressure_poisson(Primitives, mesh, gamma = 1.4, rho_inf = self.rho_0)
+
+class IsentropicVortex():
+    """ Shu's isentropic vortex advected by (u_inf, v_inf) on a periodic box.
+        Exact Euler solution: the vortex is transported without deformation. """
+    def __init__(self, beta = 5., u_inf = 1., v_inf = 0.5, center = None, gamma = 1.4):
+        self.beta = beta
+        self.u_inf = u_inf
+        self.v_inf = v_inf
+        self.center = center
+        self.gamma = gamma
+
+    def build(self, mesh):
+        gamma = self.gamma
+        center = jnp.mean(mesh.points, axis = 0) if self.center is None else jnp.asarray(self.center)
+        dx = mesh.barycenter[:, 0] - center[0]
+        dy = mesh.barycenter[:, 1] - center[1]
+        r2 = dx**2 + dy**2
+
+        du = self.beta / (2 * jnp.pi) * jnp.exp(0.5 * (1 - r2))
+        dT = - (gamma - 1) * self.beta**2 / (8 * gamma * jnp.pi**2) * jnp.exp(1 - r2)
+
+        rho = (1 + dT)**(1 / (gamma - 1))
+        u = self.u_inf - du * dy
+        v = self.v_inf + du * dx
+        p = rho**gamma
+        return jnp.stack([rho, u, v, p], axis = -1)
 
 class TestMovingVortex():
     def __init__(self, R = 0.005, beta = 1/50, mach = 0.05):
@@ -401,6 +439,16 @@ class CorotatingVortices():
         t = jnp.clip(t, 0., 1.)
         # smoothstep (C1); use the C-inf bump below if you need more smoothness
         return t * t * (3. - 2. * t)
+    # def _window(self, s2):
+    #     R_cut = 3. * self.D0
+    #     delta = 4 * self.r0
+    #     r = jnp.sqrt(s2 + 1e-30)
+    #     t = jnp.clip((R_cut - r) / delta, 0., 1.)
+    #     # C-infinity smooth transition
+    #     f = jnp.exp(-1. / jnp.clip(t, 1e-30, 1.))
+    #     g = jnp.exp(-1. / jnp.clip(1. - t, 1e-30, 1.))
+    #     return jnp.where(t <= 0., 0.,
+    #             jnp.where(t >= 1., 1., f / (f + g)))
 
     def build(self, mesh):
         N = len(mesh.area)
@@ -434,7 +482,11 @@ class CorotatingVortices():
             s2 = dx * dx + dy * dy
             # peak dynamic-pressure scale of one core:
             amp = (g - 1.) / (2. * g) * self._u_peak()**2 / c_inf2  # ~ (g-1)/2 * M^2
-            return -amp * jnp.exp(1. - s2 / (1. * self.r0**2))   # in units of T_inf
+            dT = -amp * jnp.exp(1. - s2 / (1. * self.r0**2))   # in units of T_inf
+            if self.window:
+                w = self._window(s2)
+                dT = dT * w
+            return dT
 
         def velocity_field(x, y):
             T_inf = 1.0                      # reference; only ratios matter
@@ -527,9 +579,18 @@ class TestSquare():
         return Primitives
 
 ##########################################################
+def Test1():
+    upLeft = jnp.array([0.5197, -0.7259, 0, 0.4])
+    upRight = jnp.array([1., 0., 0., 1.])
+    downLeft = jnp.array([0.1072, -1.4045, -0.7259, 0.0439])
+    downRight = jnp.array([0.2579, 0., -1.4045, 0.15])
+    return upLeft, upRight, downLeft, downRight
 
 class Test():
-    def __init__(self, upLeft, upRight, downLeft, downRight):
+    def __init__(self, test = Test1):
+        if isinstance(test, str):
+            test = globals()[test]
+        upLeft, upRight, downLeft, downRight = test()
         self.upLeft = upLeft
         self.upRight = upRight
         self.downLeft = downLeft
@@ -545,138 +606,131 @@ class Test():
         return Primitives
 
 
-def Test1():
-    upLeft = jnp.array([0.5197, -0.7259, 0, 0.4])
-    upRight = jnp.array([1., 0., 0., 1.])
-    downLeft = jnp.array([0.1072, -1.4045, -0.7259, 0.0439])
-    downRight = jnp.array([0.2579, 0., -1.4045, 0.15])
-    return Test(upLeft, upRight, downLeft, downRight)
-
 def Test2():
     upLeft = jnp.array([0.5197, -0.7259, 0, 0.4])
     upRight = jnp.array([1., 0., 0., 1.])
     downLeft = jnp.array([1., -0.7259, -0.7259, 1.])
     downRight = jnp.array([0.5197, 0, -0.7259, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test3():
     upLeft = jnp.array([0.5323, 1.206, 0, 0.3])
     upRight = jnp.array([1.5, 0., 0., 1.5])
     downLeft = jnp.array([0.138, 1.206, 1.206, 0.029])
     downRight = jnp.array([0.5323, 0, 1.206, 0.3])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test4():
     upLeft = jnp.array([0.5065, 0.8939, 0, 0.35])
     upRight = jnp.array([1.1, 0., 0., 1.1])
     downLeft = jnp.array([1.1, 0.8939, 0.8939, 1.1])
     downRight = jnp.array([0.5065, 0, 0.8939, 0.35])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test5():
     upLeft = jnp.array([2., -0.75, 0.5, 1.])
     upRight = jnp.array([1., -0.75, -0.5, 1.])
     downLeft = jnp.array([1., 0.75, 0.5, 1])
     downRight = jnp.array([3, 0.75, -0.5, 1.])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test6():
     upLeft = jnp.array([2., 0.75, 0.5, 1.])
     upRight = jnp.array([1., 0.75, -0.5, 1.])
     downLeft = jnp.array([1., -0.75, 0.5, 1])
     downRight = jnp.array([3, -0.75, -0.5, 1.])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test7():
     upLeft = jnp.array([0.5197, -0.6297, 0.1, 0.4])
     upRight = jnp.array([1, 0.1, 0.1, 1.])
     downLeft = jnp.array([0.8, 0.1, 0.1, 0.4])
     downRight = jnp.array([0.5197, 0.1, -0.6259, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test8():
     upLeft = jnp.array([1., -0.6259, 0.1, 1])
     upRight = jnp.array([0.5197, 0.1, 0.1, 0.4])
     downLeft = jnp.array([0.8, 0.1, 0.1, 1])
     downRight = jnp.array([1., 0.1, -0.6259, 1])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test9():
     upLeft = jnp.array([2, 0, -0.3, 1])
     upRight = jnp.array([1, 0, 0.3, 1])
     downLeft = jnp.array([1.039, 0, -0.8133, 0.4])
     downRight = jnp.array([0.5197, 0, 0.4297, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test10():
     upLeft = jnp.array([0.5, 0, 0.6076, 1.])
     upRight = jnp.array([1., 0, 0.4297, 1])
     downLeft = jnp.array([0.2281, 0, -0.6076, 0.333])
     downRight = jnp.array([0.4562, 0, -0.4297, 0.333])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test11():
     upLeft = jnp.array([0.5313, 0.8276, 0, 0.4])
     upRight = jnp.array([1, 0.1, 0, 1])
     downLeft = jnp.array([0.8, 0.1, 0, 0.4])
     downRight = jnp.array([0.5313, 0.1, 0.7276, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test12():
     upLeft = jnp.array([1, 0.7276, 0., 1])
     upRight = jnp.array([0.5313, 0, 0., 0.4])
     downLeft = jnp.array([0.8, 0, 0., 1.])
     downRight = jnp.array([1., 0., 0.7276, 1.])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test13():
     upLeft = jnp.array([2., 0, 0.3, 1.])
     upRight = jnp.array([1, 0., -0.3, 1.])
     downLeft = jnp.array([1.0625, 0, 0.8145, 0.4])
     downRight = jnp.array([0.5313, 0, 0.4276, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test14():
     upLeft = jnp.array([1., 0., -1.2172, 8.])
     upRight = jnp.array([2., 0., -0.5606, 8.])
     downLeft = jnp.array([0.4736, 0., 1.2172, 2.6667])
     downRight = jnp.array([0.9474, 0., 1.1606, 2.6667])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test15():
     upLeft = jnp.array([0.5197, -0.6259, -0.3, 0.4])
     upRight = jnp.array([1., 0.1, -0.3, 1.])
     downLeft = jnp.array([0.8, 0.1, -0.3, 0.4])
     downRight = jnp.array([0.5313, 0.1, 0.4276, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test16():
     upLeft = jnp.array([1.0222, -0.6179, 0.1, 1.])
     upRight = jnp.array([0.5313, 0.1, 0.1, 0.4])
     downLeft = jnp.array([0.8, 0.1, 0.1, 1.])
     downRight = jnp.array([1., 0.1, 0.8276, 1.])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test17():
     upLeft = jnp.array([2., 0., -0.3, 1.])
     upRight = jnp.array([1., 0., -0.4, 1.])
     downLeft = jnp.array([1.0625, 0., 0.2145, 0.4])
     downRight = jnp.array([0.5197, 0., -1.1259, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test18():
     upLeft = jnp.array([2., 0., -0.3, 1.])
     upRight = jnp.array([1., 0., 1., 1.])
     downLeft = jnp.array([1.0625, 0., 0.2145, 0.4])
     downRight = jnp.array([0.5197, 0., 0.2741, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 def Test19():
     upLeft = jnp.array([2., 0., -0.3, 1.])
     upRight = jnp.array([1., 0., 0.3, 1.])
     downLeft = jnp.array([1.0625, 0., 0.2145, 0.4])
     downRight = jnp.array([0.5197, 0., -0.4259, 0.4])
-    return Test(upLeft, upRight, downLeft, downRight)
+    return upLeft, upRight, downLeft, downRight
 
 
 

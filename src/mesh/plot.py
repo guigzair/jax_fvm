@@ -40,7 +40,7 @@ def plot_mesh(mesh):
     ax.set_title('Mesh')
     
 
-def plot_solution(mesh, field_data, labels = r'$\rho$'):
+def plot_solution(mesh, field_data, labels = r'$\rho$', **kwargs):
     xmin = mesh.points[:,0].min()
     xmax = mesh.points[:,0].max()
     ymin = mesh.points[:,1].min()
@@ -52,13 +52,15 @@ def plot_solution(mesh, field_data, labels = r'$\rho$'):
     ax.set_aspect('equal')
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    tpc = ax.tripcolor(triang, facecolors = field_data)
+    tpc = ax.tripcolor(triang, 
+                    facecolors=field_data, **kwargs)
     ax.set_xlabel(r'$x$')
     ax.set_ylabel(r'$y$')
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     clb = fig.colorbar(tpc, cax = cax)
     clb.ax.set_title(labels)
+    return fig, ax
     # plt.tight_layout()
 
 def plot_contour_solution(mesh, field_data, **kwargs):

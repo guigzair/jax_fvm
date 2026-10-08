@@ -7,7 +7,7 @@ import jax.numpy as jnp
 def time_step_RK2(W, dt, mesh, residual, **kwargs):
 	F1 = residual(W, mesh, **kwargs)
 	W1 = W - dt * F1
-	F2 = residual(W1, mesh, **kwargs)
+	F2 = residual(W1, mesh,  **kwargs)
 	W = W - dt * F2
 	W = 0.5 * (W + W1)  # Heun's method
 	return W
