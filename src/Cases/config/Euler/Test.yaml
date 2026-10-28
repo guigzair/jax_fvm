@@ -1,7 +1,7 @@
 name: test
 mesh:
   type: None 
-  maxV: 1.e-4
+  maxV: 1.e-5
   marker_boundary: 4
   bounds: [0., 1., 0., 1.]
 kwargs:

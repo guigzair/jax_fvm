@@ -10,9 +10,11 @@ kwargs:
   R: 287
   k: 0.30780
   flag_NS: True
+  flux: Rusanov
   alpha: 0.1
+  K: 0.
 initial_condition:
-  type: dipole_vortex
+  type: balanced_dipole_vortex
   params:
     R: 0.1
     omega: 300

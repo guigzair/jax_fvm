@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-@jax.jit(static_argnums=(2,3))
+@jax.jit(static_argnums=(2,3), static_argnames=("flux",))
 def time_step_RK2(W, dt, mesh, residual, **kwargs):
 	F1 = residual(W, mesh, **kwargs)
 	W1 = W - dt * F1

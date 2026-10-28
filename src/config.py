@@ -18,6 +18,8 @@ IC_REGISTRY = {"corotating_merge": Test_Cases.CorotatingVortices,
                "balanced_dipole_vortex": Test_Cases.BalancedDipoleVortex,
                "isentropic_vortex": Test_Cases.IsentropicVortex,
                "kelvin_helmholtz": Test_Cases.KevinHelmotzInstability,
+               "kelvin_helmholtz_asym": Test_Cases.KevinHelmotzInstabilityAssymetric,
+               "kelvin_helmholtz_multimode": Test_Cases.KevinHelmotzInstabilityMultimode,
                "double_mach": Test_Cases.DoubleMachReflection,
                "test": Test_Cases.Test}
 
@@ -82,6 +84,9 @@ class Config:
     def from_yaml(cls, path):
         with open(path) as f:
             raw = yaml.safe_load(f)
+        kw = raw.get("kwargs", {})
+        if "Pr" in kw:  # heat conductivity from the Prandtl number: k = mu * cp / Pr, cp = gamma R / (gamma - 1)
+            kw["k"] = kw["mu"] * kw.get("gamma", 1.4) * kw.get("R", 287) / ((kw.get("gamma", 1.4) - 1) * kw["Pr"])
         return cls(
             name=raw["name"],
             mesh=MeshConfig(**raw["mesh"]),

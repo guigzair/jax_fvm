@@ -128,19 +128,20 @@ class Mesh:
         clb.ax.set_title(clb_title)
         return fig, ax
 
-    def animate_field(self, field_sequence, interval=100, clb_title=r"$\omega$"):
+    def animate_field(self, field_sequence, interval=100, name="vorticity_evolution", **kwargs):
         fig, ax = plt.subplots(figsize=(6,5))
 
         im = ax.imshow(field_sequence[0]/jnp.max(jnp.abs(field_sequence[0])),
                     origin="lower",
-                    extent=[0, self.L, 0, self.L])
+                    extent=[0, self.L, 0, self.L],
+                    cmap='twilight')
         ax.set_title("2D Navier-Stokes Vorticity")
         plt.colorbar(im, ax=ax)
 
         def update(frame):
-            im.set_data(field_sequence[frame]/jnp.max(jnp.abs(field_sequence[frame])))
+            im.set_data(field_sequence[frame].T/jnp.max(jnp.abs(field_sequence[frame])))
             return [im]
 
         ani = animation.FuncAnimation(fig, update, frames=len(field_sequence), interval=interval)
 
-        ani.save('vorticity_evolution.gif', writer='imagemagick')
+        ani.save(f'{name}.gif', writer='imagemagick')

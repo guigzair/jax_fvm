@@ -106,14 +106,19 @@ def animate_solution(mesh, field_sequence, path = "animation.gif", interval=200)
     ymin = mesh.points[:,1].min()
     ymax = mesh.points[:,1].max()
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(dpi = 200)
     ax.set_aspect('equal')
     ax.set_xlabel(r'$x$')
     ax.set_ylabel(r'$y$')
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
+    
+    field_sequence = np.asarray(field_sequence)
+    tpc = ax.tripcolor(triang, facecolors = field_sequence[0])
     def update(frame):
-        ax.tripcolor(triang, facecolors = field_sequence[frame])
+        tpc.set_array(field_sequence[frame])
+        tpc.autoscale()
+        return tpc,
 
     ani = animation.FuncAnimation(fig, update, frames=len(field_sequence), interval=interval)
 

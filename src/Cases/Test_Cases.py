@@ -356,6 +356,59 @@ class KevinHelmotzInstability():
         Primitives = Primitives.at[...,3].set(p)
         return Primitives
 
+class KevinHelmotzInstabilityAssymetric():
+    def __init__(self, sigma = 1., alpha = 1.):
+        self.sigma = sigma
+        self.alpha = alpha
+
+    def build(self, mesh):
+        N = len(mesh.area)
+
+        def velocity_field(x, y):
+            rho = 1 + 1/ (1 + jnp.exp(- (y - 0.25)/self.sigma**2)) - 1/ (1 + jnp.exp(- (y - 0.75)/self.sigma**2))
+            u = 1/ (1 + jnp.exp(- (y - 0.25)/self.sigma**2)) - 1/ (1 + jnp.exp(- (y - 0.75)/self.sigma**2)) - 1/2
+            v = self.alpha * jnp.sin(2 * jnp.pi * 2 * (x - 0.5)) * (jnp.exp(- 2 * (y - 0.25)**2/(self.sigma**2)) + jnp.exp(- 2 * (y - 0.75)**2/(self.sigma**2)))
+            p = 2.5
+            return rho, u, v , p
+
+        Primitives = jnp.zeros((N, 4))
+        rho, u, v, p = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
+        Primitives = Primitives.at[...,0].set(rho)
+        Primitives = Primitives.at[...,1].set(u)
+        Primitives = Primitives.at[...,2].set(v)
+        Primitives = Primitives.at[...,3].set(p)
+        return Primitives
+
+class KevinHelmotzInstabilityMultimode():
+    def __init__(self, sigma = 1., alpha = 1., m_max = 10, seed = 0):
+        self.sigma = sigma
+        self.alpha = alpha
+        self.m_max = m_max  # number of modes in the perturbation
+        self.seed = seed    # seed of the random phases
+
+    def build(self, mesh):
+        N = len(mesh.area)
+
+        def velocity_field(x, y):
+            rho = 1 + 1/ (1 + jnp.exp(- (y - 0.25)/self.sigma)) - 1/ (1 + jnp.exp(- (y - 0.75)/self.sigma))
+            u = 1/ (1 + jnp.exp(- (y - 0.25)/self.sigma)) - 1/ (1 + jnp.exp(- (y - 0.75)/self.sigma)) - 1/2
+            # sum of m_max modes with random phases, independent at the bottom (y=0.25) and top (y=0.75) layers
+            phases = np.random.default_rng(self.seed).uniform(0, 2 * np.pi, (2, self.m_max))
+            m = jnp.arange(1, self.m_max + 1)
+            v_bottom = jnp.sum(jnp.sin(2 * jnp.pi * m * x[:,None] + phases[0]), axis = -1)
+            v_top = jnp.sum(jnp.sin(2 * jnp.pi * m * x[:,None] + phases[1]), axis = -1)
+            v = self.alpha / self.m_max * (v_bottom * jnp.exp(- 2 * (y - 0.25)**2/(self.sigma)) + v_top * jnp.exp(- 2 * (y - 0.75)**2/(self.sigma)))
+            p = 2.5
+            return rho, u, v , p
+
+        Primitives = jnp.zeros((N, 4))
+        rho, u, v, p = velocity_field(mesh.barycenter[:,0], mesh.barycenter[:,1])
+        Primitives = Primitives.at[...,0].set(rho)
+        Primitives = Primitives.at[...,1].set(u)
+        Primitives = Primitives.at[...,2].set(v)
+        Primitives = Primitives.at[...,3].set(p)
+        return Primitives
+
 class MergingPair():
     def __init__(self, r0=0.18, D0=1.,
                  center=(0., 0.), rho_inf=1., omega=300, mach = 0.01):

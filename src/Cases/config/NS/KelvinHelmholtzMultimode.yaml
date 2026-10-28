@@ -1,0 +1,29 @@
+name: kelvin_helmholtz_multimode
+mesh:
+  type: UniformMesh
+  params:
+    Nx: 100
+    Ny: 100
+    Lx: 1.0
+    Ly: 1.0
+kwargs:
+  gamma: 1.4
+  mu: 2.e-4
+  R: 287
+  Pr: 0.71    # k = mu * cp / Pr, cp = gamma R / (gamma-1)
+  flag_NS: True
+  flux: Roe
+  alpha: 1.
+  order: 2
+  K: 5.
+initial_condition:
+  type: kelvin_helmholtz_multimode
+  params:
+    sigma: 0.01
+    alpha: 0.02
+    m_max: 3   # number of modes 
+    seed: 0    
+time:
+  cfl: 0.4
+  t_end: 2.
+  scheme: rk2

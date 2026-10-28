@@ -39,7 +39,7 @@ def minmod(a, b, **kwargs):
 	c = a / b
 	return jnp.minimum(1., c)
 
-def getlimiting(W_L, W_R, grad, mesh, limiting_fct = venkatakrishnan):
+def getlimiting(W_L, W_R, grad, mesh, limiting_fct = venkatakrishnan, **kwargs):
 	W_m  = jnp.min(jnp.concatenate([W_L, W_R], axis = -2), axis = -2) # (N_cells, N_vars)
 	W_M  = jnp.max(jnp.concatenate([W_L, W_R], axis = -2), axis = -2) # (N_cells, N_vars)
 
@@ -51,10 +51,10 @@ def getlimiting(W_L, W_R, grad, mesh, limiting_fct = venkatakrishnan):
 
 	eps = jnp.asarray(1e-12 if W_L.dtype == jnp.float64 else 1e-7, dtype=W_L.dtype)
 	phi = jnp.where(Delta > eps,
-					limiting_fct(W_M[...,None,:] - W_L, Delta, h = jnp.sqrt(mesh.area), K =0.),
+					limiting_fct(W_M[...,None,:] - W_L, Delta, h = jnp.sqrt(mesh.area), K =kwargs.get('K', 0.)),
 					phi)
 	phi = jnp.where(Delta < -eps,
-					limiting_fct(W_m[...,None,:] - W_L, Delta, h = jnp.sqrt(mesh.area), K = 0.),
+					limiting_fct(W_m[...,None,:] - W_L, Delta, h = jnp.sqrt(mesh.area), K = kwargs.get('K', 0.)),
 					phi)
 	
 	# phi = jnp.where(mesh.face_markers[mesh.face_connectivity][...,None] > 1,
@@ -63,9 +63,9 @@ def getlimiting(W_L, W_R, grad, mesh, limiting_fct = venkatakrishnan):
 	phi = jnp.min(phi, axis = -2)  # (N_cells, N_vars)
 	return phi
 
-def MUSCL(W_L, W_R, grad, mesh):
+def MUSCL(W_L, W_R, grad, mesh, **kwargs):
 
-	phi = getlimiting(W_L, W_R, grad, mesh)  # (N_cells, N_vars)
+	phi = getlimiting(W_L, W_R, grad, mesh, **kwargs)  # (N_cells, N_vars)
 	# phi = jnp.ones_like(phi) # --- IGNORE --- for 2nd order without limiter
 
 	mid_point_faces = jnp.mean(mesh.points[mesh.faces[mesh.face_connectivity]], axis = -2) # (N_cells,3,2)
@@ -129,6 +129,8 @@ def Roe(W_L, W_R, normals, **kwargs):
 	Lambda = Lambda.at[...,1].set(u_roe * normals[...,0] + v_roe * normals[...,1])
 	Lambda = Lambda.at[...,2].set(u_roe * normals[...,0] + v_roe * normals[...,1])
 	Lambda = Lambda.at[...,3].set(u_roe * normals[...,0] + v_roe * normals[...,1] + a_roe)
+	# eigenvalue floor |lambda| >= delta * a (Harten-type), avoids zero dissipation where u.n ~ 0 (walls, vortex cores)
+	Lambda = jnp.maximum(jnp.abs(Lambda), 0.05 * a_roe[...,None])
 
 	Eta_R = helper.getEntropyVariables(W_R, gamma = gamma)
 	Eta_L = helper.getEntropyVariables(W_L, gamma = gamma)
@@ -137,7 +139,7 @@ def Roe(W_L, W_R, normals, **kwargs):
 	scaling = jnp.zeros_like(Lambda)
 	scaling = scaling.at[...,0].set(rho_roe / (2 * gamma))   # acoustic L
 	scaling = scaling.at[...,1].set((gamma-1) * rho_roe / gamma)  # entropy
-	scaling = scaling.at[...,2].set( rho_roe / gamma)                      # shear
+	scaling = scaling.at[...,2].set( rho_roe * a_roe**2 / gamma)           # shear (= p)
 	scaling = scaling.at[...,3].set(rho_roe / (2 * gamma))    # acoustic R
 	
 	R_inv = jnp.transpose(R, axes = (0,1,3,2))  
@@ -305,8 +307,10 @@ def getFlux_Tadmor(W_L, W_R, normals, surfaces, **kwargs):
 	# Total flux
 	alpha = kwargs.get('alpha', 1.)
 	scaling = jnp.array([alpha, alpha, alpha, alpha])
-	Flux = Flux - scaling * Rusanov(W_L, W_R, normals, **kwargs)
-	# Flux = Flux - alpha * Roe(W_L, W_R, normals, **kwargs) 
+	if kwargs.get('flux', 'Rusanov') == 'Rusanov':
+		Flux = Flux - scaling * Rusanov(W_L, W_R, normals, **kwargs)
+	elif kwargs.get('flux', 'Rusanov') == 'Roe':
+		Flux = Flux - alpha * Roe(W_L, W_R, normals, **kwargs) 
 
 	# Flux = surfaces[...,None] * Flux
 
@@ -331,7 +335,7 @@ def residual(W, mesh, **kwargs):
 		W_L = helper.getPrimitive(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 		W_R = helper.getPrimitive(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 		grad = helper.getgradientLSQ(W_L, W_R, mesh)
-		W_L, W_R = MUSCL(W_L, W_R, grad, mesh)
+		W_L, W_R = MUSCL(W_L, W_R, grad, mesh, **kwargs)
 		W_L = helper.getConserved(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 		W_R = helper.getConserved(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 
@@ -354,10 +358,10 @@ def residual(W, mesh, **kwargs):
 
 if __name__ == "__main__":
 	# cfg_path = "../../Cases/config/Euler/corotating_merge.yaml"
-	# cfg_path = "../../Cases/config/Euler/KelvinHelmholtz.yaml"
+	cfg_path = "../../Cases/config/Euler/KelvinHelmholtz.yaml"
 	# cfg_path = "../../Cases/config/DipoleVortex.yaml"
 	# cfg_path = "../../Cases/config/Euler/double_mach.yaml"
-	cfg_path = "../../Cases/config/Euler/Test.yaml"
+	# cfg_path = "../../Cases/config/Euler/Test.yaml"
 	case = Case.build(cfg_path, MeshClass=Mesh)
 
 	# mesh = Mesh()
@@ -378,7 +382,7 @@ if __name__ == "__main__":
 
 	start_time = time.time()
 
-	T_interval_snapshots = 10000
+	T_interval_snapshots = 100
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
 		W = TimeIntegration.time_step_RK2(W, dt, case.mesh, residual, **kwargs)

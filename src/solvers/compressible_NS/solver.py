@@ -33,52 +33,77 @@ plt.rcParams.update(params)
 ###########################################################################################################
 
 
-def getFlux_diffusive2(grad_prim, Prim_L, Prim_R, mesh, **kwargs):
+def getFlux_diffusive2(grad_face, Prim_L, Prim_R, mesh, **kwargs):
+	# grad_face: face gradients of [rho, u, v, P, T], (N_cells, 3, 5, 2)
 	mu = kwargs.get('mu', 1.716e-4)
-	R = kwargs.get('R', 287)
 	k = kwargs.get('k', 0.0257)
 
-	# compute stress tensor
-	div_u = grad_prim[:,1,0] + grad_prim[:,2,1]
+	# stress tensor at each face
+	grad_u = grad_face[...,1:3,:]  # (N_cells, 3, 2, 2)
+	div_u = grad_u[...,0,0] + grad_u[...,1,1]
+	tau = grad_u + jnp.swapaxes(grad_u, -1, -2)
+	tau = tau - 2/3 * div_u[...,None,None] * jnp.eye(2)
+	tau = mu * tau
 
-	temp_L = helper.get_temperature(Prim_L, R = R)
-	temp_R = helper.get_temperature(Prim_R, R = R)
-	grad_T = helper.getgradientLSQ(temp_L[...,None], temp_R[...,None], mesh)
-	print(f"grad_T shape: {grad_T.shape}")
-
-	tau = grad_prim[...,1:3,:] + jnp.transpose(grad_prim[...,1:3,:], (0,2,1))
-	tau = tau - 2/3 * jnp.einsum('ij,kl->ikl', div_u[...,None],jnp.eye(2))
-	tau = mu * tau 
-
-	tau_L = jnp.repeat(tau[...,None,:,:], 3, axis=-3)
-	tau_R = tau[mesh.neighbors]
-	tau_R = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] > 1)[...,None,None], 2, axis=-2), tau_L, tau_R)
-
-	Flux_tau = 1/2 * (tau_L + tau_R)
+	grad_T = grad_face[...,4,:]  # (N_cells, 3, 2)
 
 	# Get corresponding normals
 	nx = mesh.normals[...,0]
 	ny = mesh.normals[...,1]
 
-	Flux_tau_x = Flux_tau[...,0,0] * nx + Flux_tau[...,0,1] * ny
-	Flux_tau_y = Flux_tau[...,1,0] * nx + Flux_tau[...,1,1] * ny
+	Flux_tau_x = tau[...,0,0] * nx + tau[...,0,1] * ny
+	Flux_tau_y = tau[...,1,0] * nx + tau[...,1,1] * ny
 
-	Flux_energy = tau_R[...,0,:] * Prim_R[...,1][...,None] +  tau_R[...,1,:] * Prim_R[...,2][...,None]# q = - k grad(T)  and here we have grad(u) instead of grad(T)
-	Flux_energy = Flux_energy + tau_L[...,0,:] * Prim_L[...,1][...,None] +  tau_L[...,1,:] * Prim_L[...,2][...,None]
-	Flux_energy = 0.5 * (Flux_energy[...,0] * nx + Flux_energy[...,1] * ny)
+	# (tau . u) . n + k grad(T) . n   (q = - k grad(T)), tau symmetric
+	u_f = 0.5 * (Prim_L[...,1] + Prim_R[...,1])
+	v_f = 0.5 * (Prim_L[...,2] + Prim_R[...,2])
+	Flux_energy = u_f * Flux_tau_x + v_f * Flux_tau_y
 	Flux_energy = Flux_energy + k * (grad_T[...,0] * nx + grad_T[...,1] * ny)
 
-	surfaces = mesh.surface[mesh.face_connectivity]
-
-	Flux = jnp.stack([surfaces * jnp.zeros_like(Flux_tau_x), 
-						surfaces * Flux_tau_x, 
-						surfaces * Flux_tau_y, 
-						surfaces * Flux_energy], axis = -1)
-
-	Flux = jnp.sum(Flux, axis = -2)
+	# per-face flux (N_cells, 3, 4); surface scaling and face sum are done in residual
+	Flux = jnp.stack([jnp.zeros_like(Flux_tau_x), 
+						Flux_tau_x, 
+						Flux_tau_y, 
+						Flux_energy], axis = -1)
 
 	return Flux
 
+
+def getFlux_diffusive_ES(W_L, W_R, mesh, **kwargs):
+	gamma = kwargs.get('gamma', 1.4)
+	mu = kwargs.get('mu', 1.716e-4)
+	k = kwargs.get('k', 0.0257)
+	R = kwargs.get('R', 287)
+
+	V_L = helper.getEntropyVariables(W_L, gamma = gamma)
+	V_R = helper.getEntropyVariables(W_R, gamma = gamma)
+	# grad_V = helper.gradient_GG(V_L, V_R, mesh)  # (N_cells, 4, 2)
+	grad_V = helper.getgradientLSQ(V_L, V_R, mesh)  # (N_cells, 4, 2)
+
+	V = V_L[:,0]
+	u = - V[:,1] / V[:,3]
+	v = - V[:,2] / V[:,3]
+	grad_u = - (grad_V[:,1] + u[:,None] * grad_V[:,3]) / V[:,3,None]  # (N_cells, 2)
+	grad_v = - (grad_V[:,2] + v[:,None] * grad_V[:,3]) / V[:,3,None]
+	grad_T = grad_V[:,3] / (R * V[:,3,None]**2)
+
+	div_u = grad_u[:,0] + grad_v[:,1]
+	tau_xx = mu * (2 * grad_u[:,0] - 2/3 * div_u)
+	tau_yy = mu * (2 * grad_v[:,1] - 2/3 * div_u)
+	tau_xy = mu * (grad_u[:,1] + grad_v[:,0])
+
+	f_v = jnp.stack([jnp.zeros((V.shape[0], 2)),
+					jnp.stack([tau_xx, tau_xy], axis = -1),
+					jnp.stack([tau_xy, tau_yy], axis = -1),
+					jnp.stack([u * tau_xx + v * tau_xy + k * grad_T[:,0],
+							   u * tau_xy + v * tau_yy + k * grad_T[:,1]], axis = -1)], axis = -2)  # (N_cells, 4, 2)
+
+	# central face flux (own cell flux on boundary faces)
+	f_v_R = jnp.where((mesh.face_markers[mesh.face_connectivity] > 1)[...,None,None], f_v[:,None], f_v[mesh.neighbors])
+	f_face = 0.5 * (f_v[:,None] + f_v_R)  # (N_cells, 3, 4, 2)
+
+	# per-face flux (N_cells, 3, 4); surface scaling and face sum are done in residual
+	return jnp.einsum('ijkl,ijl->ijk', f_face, mesh.normals)
 
 
 def getFlux_diffusive(grad, Prim_L, Prim_R, mesh, **kwargs):
@@ -140,27 +165,30 @@ def getFlux_diffusive(grad, Prim_L, Prim_R, mesh, **kwargs):
 ############################           Time integration                 ###################################
 ###########################################################################################################
 
-@jax.jit(static_argnums=(1,))
+@jax.jit(static_argnums=(1,), static_argnames=("flux",))
 def residual(W, mesh, **kwargs):
 	# 1st order
 	W_L = jnp.repeat(W[...,None,:], 3, axis=-2)
 	W_R = W[mesh.neighbors]
-
-	# 2nd order - MUSCL with least-square gradient
 	W_R = helper.BC_state(W_R, W_L, mesh, **kwargs)
+
 
 	Prim_L = helper.getPrimitive(W_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 	Prim_R = helper.getPrimitive(W_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 	grad = helper.getgradientLSQ(Prim_L, Prim_R, mesh)
-	Prim_L, Prim_R = Euler.MUSCL(Prim_L, Prim_R, grad, mesh)
+	# Flux_diffusive = getFlux_diffusive_ES(W_L, W_R, mesh, **kwargs)
+	Prim_L, Prim_R = Euler.MUSCL(Prim_L, Prim_R, grad, mesh, **kwargs)
+
+	PrimT_L = jnp.concatenate([Prim_L, helper.get_temperature(Prim_L, R = kwargs.get('R', 287))[...,None]], axis=-1)
+	PrimT_R = jnp.concatenate([Prim_R, helper.get_temperature(Prim_R, R = kwargs.get('R', 287))[...,None]], axis=-1)
+	grad_T = helper.getgradientLSQ(PrimT_L[...,4:], PrimT_R[...,4:], mesh)
+	grad_face = helper.face_gradient(jnp.concatenate([grad, grad_T], axis=-2), PrimT_L, PrimT_R, mesh)
+	Flux_diffusive = getFlux_diffusive2(grad_face, Prim_L, Prim_R, mesh, **kwargs)
+
 	W_L = helper.getConserved(Prim_L, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 	W_R = helper.getConserved(Prim_R, gamma = kwargs.get('gamma', 1.4), M = kwargs.get('M', 1.))
 
-	# compute convective flux using Tadmor's central scheme
 	Flux_convective = Euler.getFlux_Tadmor(W_L, W_R, mesh.normals, mesh.surface[mesh.face_connectivity], **kwargs) 
-	
-	# compute diffusive flux based on primitive variable gradients
-	Flux_diffusive = getFlux_diffusive2(grad, Prim_L, Prim_R, mesh, **kwargs)
 
 	Flux = Flux_convective - Flux_diffusive
 	Flux = mesh.surface[mesh.face_connectivity][...,None] * Flux
@@ -174,7 +202,9 @@ def residual(W, mesh, **kwargs):
 if __name__ == "__main__":
 	# cfg_path = "../../Cases/config/NS/corotating_merge.yaml"
 	# cfg_path = "../../Cases/config/NS/KelvinHelmholtz.yaml"
-	cfg_path = "../../Cases/config/NS/DipoleVortex.yaml"
+	# cfg_path = "../../Cases/config/NS/KelvinHelmholtzAsym.yaml"
+	cfg_path = "../../Cases/config/NS/KelvinHelmholtzMultimode.yaml"
+	# cfg_path = "../../Cases/config/NS/DipoleVortex.yaml"
 	case = Case.build(cfg_path, MeshClass=Mesh)
 
 	W = helper.getConserved(case.primitives)
@@ -184,14 +214,17 @@ if __name__ == "__main__":
 	dt = helper.get_dt(W, case.mesh, CFL = case.config.time.cfl)
 	dt_viscous = helper.get_dt_viscous(case.mesh, 
 									CFL = case.config.time.cfl, 
-									nu = case.config.kwargs.get('mu', 1.0) / jnp.mean(case.primitives[...,0]))
+									# max of kinematic viscosity mu/rho and thermal diffusivity k/(rho cv), cv = R/(gamma-1)
+									nu = max(case.config.kwargs.get('mu', 1.0),
+											case.config.kwargs.get('k', 0.0) * (case.config.kwargs.get('gamma', 1.4) - 1) / case.config.kwargs.get('R', 287)) 
+										/ jnp.mean(case.primitives[...,0]))
 	dt = jnp.min(jnp.array([dt, dt_viscous]))
 	print(f"dt convective: {dt:.2e}, dt viscous: {dt_viscous:.2e}")
 	N_t = int(t_final / dt) + 1
 
 	start_time = time.time()
 
-	T_interval_snapshots = 500
+	T_interval_snapshots = 1000
 	Snapshots = jnp.zeros((int(N_t/T_interval_snapshots), *W.shape))
 	for n in range(N_t):
 		W = TimeIntegration.time_step_RK2(W, dt, case.mesh, residual, **case.config.kwargs)
@@ -205,11 +238,13 @@ if __name__ == "__main__":
 
 	# Plot solution
 	Primitives = helper.getPrimitive(W)
-	case.mesh.plot_solution(Primitives[...,0], labels = r'$\rho$')
+	fig, ax = case.mesh.plot_solution(Primitives[...,0], labels = r'$\rho$')
+	# fig.savefig('density.pdf', dpi=1000)
+
 	case.mesh.plot_solution(Primitives[...,3], labels = r'$P$')
 
 	# vorticity
-	vorticity = helper.get_vorticity_from_field(W, case.mesh, **case.config.kwargs)
+	vorticity = helper.get_vorticity_from_field(W, case.mesh, interior_only=True, **case.config.kwargs)
 	# case.mesh.plot_contour_solution(vorticity, labels = r'$\omega$')
 	case.mesh.plot_solution(vorticity, labels = r'$\omega$')
 
@@ -236,6 +271,10 @@ if __name__ == "__main__":
 	ax.set_xlabel(r't')
 	ax.set_ylabel(r'$E$')
 	ax.grid()
+
+	# vorticity_snap = jax.lax.map(lambda x: helper.get_vorticity_from_field(x, case.mesh), Snapshots)
+	# case.mesh.animate_field(Snapshots[::1,:,0], path = "density.gif", interval = 100)
+
 
 
 	

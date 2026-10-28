@@ -101,6 +101,8 @@ def get_forcing_term_kolmogorov(mesh, n=4, F=1.):
 def get_forcing(mesh, key, forcing='shell', **kwargs):
     # returns (f_hat, stochastic): stochastic forcings are white in time and applied
     # as sqrt(dt) * f_hat, deterministic ones as dt * f_hat
+    if forcing == 'none':
+        return jnp.zeros_like(mesh.X), False
     if forcing == 'paper':
         return get_forcing_term_paper(mesh, key, eps=kwargs.get('eps', 1.)), True
     if forcing == 'kolmogorov':
@@ -180,18 +182,23 @@ if __name__ == "__main__":
     # -----------------------------
     # Parameters
     # -----------------------------
-    N = 2048
-    L = 2 * jnp.pi
-    nu = 1e-3
+    # N = 2048
+    # L = 2 * jnp.pi
+    # nu = 1e-3
+    N = 1024
+    L = 1.        # Kelvin-Helmholtz multimode, as KelvinHelmholtzMultimode.yaml
+    nu = 1e-5     # = mu / rho with rho = 1
 
-    forcing = 'paper' # 'paper', 'shell', 'kolmogorov'
+    # forcing = 'paper' # 'paper', 'shell', 'kolmogorov'
+    forcing = 'none' # 'none', 'paper', 'shell', 'kolmogorov'
     eps = 1.     # 'paper': amplitude of the forcing
     k = 5.       # 'shell': forcing wavenumber
     dk = 1.      # 'shell': shell width
     eps0 = 1.    # 'shell': energy injection rate
     kolmo_n = 4  # 'kolmogorov': forcing wavenumber
     kolmo_F = 1. # 'kolmogorov': forcing amplitude
-    alpha = 0.1  # linear drag, saturation energy ~ eps0 / (2 alpha)
+    # alpha = 0.1  # linear drag, saturation energy ~ eps0 / (2 alpha)
+    alpha = 0.   # linear drag, saturation energy ~ eps0 / (2 alpha)
 
     kwargs = {'nu': nu, 'k': k, 'dk': dk, 'eps0': eps0, 'eps': eps,
               'kolmo_n': kolmo_n, 'kolmo_F': kolmo_F, 'alpha': alpha}
@@ -207,7 +214,8 @@ if __name__ == "__main__":
     mesh = mesh_vort.Mesh()
     mesh.mesh_generator(N=N, L=L)
 
-    omega_hat = helpers.gaussian_noise(mesh, jax.random.PRNGKey(0), E0=2.0)
+    # omega_hat = helpers.gaussian_noise(mesh, jax.random.PRNGKey(0), E0=2.0)
+    omega_hat = helpers.kelvin_helmholtz_multimode(mesh, sigma=0.01, alpha=0.02, m_max=20, seed=0)
     # omega_hat = helpers.Taylor_green_vortex(mesh)
     # omega_hat = helpers.dipole_vortex(mesh, E0=2.0)
 
@@ -219,12 +227,15 @@ if __name__ == "__main__":
     # (von Neumann estimate for IMEX Euler, conservative for IMEX-RK2)
     dt_viscous = 2 * nu / jnp.max(u**2 + v**2)
     dt = min(float(dt_cfl), float(dt_viscous))
-    T = 4
+    # T = 4
+    T = 3.
     N_t = int(T / dt)
     print(f"dt_cfl = {dt_cfl:.3e}, dt_viscous = {dt_viscous:.3e} -> dt = {dt:.3e}, nsteps = {N_t}")
     E = []
     Eta = []
     P = []
+    T_interval_snapshots = 1000
+    Snapshots_vort = jnp.zeros((N_t//T_interval_snapshots, N, N), dtype=jnp.float32)
     for n in range(N_t):
         key, subkey = jax.random.split(key)
         omega_hat, (Energy, Enstrophy, Palinstrophy) = step_IMEX_RK2(omega_hat, mesh, dt, subkey, forcing=forcing, **kwargs)
@@ -235,7 +246,8 @@ if __name__ == "__main__":
         E.append(Energy)
         Eta.append(Enstrophy)
         P.append(Palinstrophy)
-            
+        if n % T_interval_snapshots == 0:
+            Snapshots_vort = Snapshots_vort.at[n//T_interval_snapshots].set(jnp.real(jnp.fft.ifft2(omega_hat)))
 
     # one device->host transfer instead of one per scalar
     E, Eta, P = (jnp.stack(x).tolist() for x in (E, Eta, P))
@@ -263,3 +275,7 @@ if __name__ == "__main__":
     ax.set_ylabel(r"Energy Spectrum $E(k)$")
     ax.legend()
     ax.grid(True)
+
+    # gif
+    mesh.animate_field(Snapshots_vort, interval = 100)
+

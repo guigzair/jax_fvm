@@ -1,0 +1,25 @@
+name: kelvin_helmholtz_asym
+mesh:
+  type: UniformMesh 
+  params:
+    Nx: 150
+    Ny: 150
+    Lx: 1.0
+    Ly: 1.0
+kwargs:
+  gamma: 1.4
+  mu: 1.716e-4
+  R: 287
+  k: 0.1415   # mu * cp / Pr with cp = gamma R / (gamma-1), Pr = 0.71
+  flag_NS: True
+  alpha: 0.01
+  order: 2
+initial_condition:
+  type: kelvin_helmholtz_asym
+  params:
+    sigma: 0.1
+    alpha: 0.01
+time:
+  cfl: 0.4
+  t_end: 5.
+  scheme: rk2

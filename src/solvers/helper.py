@@ -25,8 +25,8 @@ def getConserved(Primitives, gamma = 1.4, M = 1):
 	Mom_x = rho * u 
 	Mom_y = rho * v 
 	Energy = P/((gamma-1) * M**2) + 0.5*rho*(u**2 + v**2)
-	Mass  = jnp.where(Mass <= 0, 1e-6, Mass)  # Avoid negative density
-	Energy = jnp.where(Energy <= 0, 1e-6, Energy)  # Avoid negative energy
+	# Mass  = jnp.where(Mass <= 0, 1e-6, Mass)  # Avoid negative density
+	# Energy = jnp.where(Energy <= 0, 1e-6, Energy)  # Avoid negative energy
 	W = jnp.stack([Mass, Mom_x, Mom_y, Energy], axis = -1)
 	return W
 
@@ -38,8 +38,8 @@ def getPrimitive(W, gamma = 1.4, M = 1):
 	u = Mom_x / rho 
 	v = Mom_y / rho 
 	P = (Energy - 0.5*rho * (u**2 + v**2)) * M**2 * (gamma-1)
-	rho = jnp.where(rho <= 0, 1e-6, rho)  # Avoid division by zero or negative density
-	P = jnp.where(P <= 0, 1e-6, P)  # Avoid negative pressure
+	# rho = jnp.where(rho <= 0, 1e-6, rho)  # Avoid division by zero or negative density
+	# P = jnp.where(P <= 0, 1e-6, P)  # Avoid negative pressure
 	Primitives = jnp.stack([rho, u, v, P], axis = -1)
 	return Primitives
 
@@ -49,8 +49,8 @@ def get_specific_entropy(W, gamma = 1.4):
     v = W[...,2] / rho
     E = W[...,3]
     P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)
-    rho = jnp.where(rho <= 0, 1e-6, rho) 
-    P = jnp.where(P <= 0, 1e-6, P)  
+    # rho = jnp.where(rho <= 0, 1e-6, rho) 
+    # P = jnp.where(P <= 0, 1e-6, P)  
     s = jnp.log(P / rho**gamma)
     return s
 
@@ -62,7 +62,7 @@ def getEntropyVariables(W, **kwargs):
 	v = W[...,2] / rho
 	E = W[...,3]
 	P = (E - 0.5*rho * (u**2 + v**2)) * (gamma-1)    
-	P = jnp.where(P <= 0, 1e-6, P)  
+	# P = jnp.where(P <= 0, 1e-6, P)  
 	s = get_specific_entropy(W, gamma = gamma)
 	V1 = (gamma - s) / (gamma - 1) - 0.5 * rho * (u**2 + v**2) / P
 	V2 = W[...,1] / P
@@ -77,7 +77,7 @@ def getConserved_from_Entropy(ETA, **kwargs):
 	eta2 = ETA[...,1]
 	eta3 = ETA[...,2]
 	eta4 = ETA[...,3]
-	eta4 = jnp.where(eta4 >= 0, -1e-6, eta4) 
+	# eta4 = jnp.where(eta4 >= 0, -1e-6, eta4) 
 
 	u = - eta2 / eta4
 	v = - eta3 / eta4
@@ -136,7 +136,8 @@ def get_Roe_averaged_state(W_L, W_R, gamma = 1.4):
 ###########################################################################################################
 
 
-def getgradientLSQ(W_L, W_R, mesh):
+def get_Delta_x(mesh):
+	# Vector from each cell barycenter to its neighbor barycenter, (N_cells, 3, 2).
 	# Periodic shift: for periodic faces (marker == 1) the neighbor is a real cell on the
 	# opposite edge, so its barycenter must be translated by the domain period to sit next
 	# to the current cell. The shift is midpoint(face) - midpoint(opposite face); it is
@@ -154,10 +155,15 @@ def getgradientLSQ(W_L, W_R, mesh):
 	replace = 2 * (replace - mesh.barycenter[...,None,:]) # trick in case the face is on the boundary = use face midpoint instead of neighbor cell center
 	
 	Delta_x = jnp.where(jnp.repeat((mesh.face_markers[mesh.face_connectivity] > 1)[...,None], 2, axis=-1), replace, Delta_x)
+	return Delta_x
 
+def getgradientLSQ(W_L, W_R, mesh, interior_only = False):
+	Delta_x = get_Delta_x(mesh)
 
 	Delta_w = W_R - W_L
 	weights = 1 / jnp.linalg.norm(Delta_x, axis = -1)**2  # (N_cells, 3)
+	if interior_only:  # ignore boundary (ghost) faces, gradient from interior neighbors only
+		weights = jnp.where(mesh.face_markers[mesh.face_connectivity] > 1, 0., weights)
 	# weights = jnp.ones_like(weights)  # uniform weights --- IGNORE ---
 
 	A = jnp.einsum('ijk,ijl->ikl', weights[...,None] * Delta_x, Delta_x)  # (N_cells, 2, 2)
@@ -167,6 +173,22 @@ def getgradientLSQ(W_L, W_R, mesh):
 	grad = jax.vmap(jax.vmap(jnp.linalg.solve))(jnp.repeat(A[:,None,...], b.shape[-2], axis=-3), b)  # (N_cells, 2, N_vars)
 	return grad
 
+
+def face_gradient(grad, W_L, W_R, mesh):
+	# Face gradient = average of the two cell gradients, with its component along the
+	# cell-to-cell direction replaced by the compact difference (W_R - W_L) / |Delta_x|.
+	# Avoids the odd-even decoupling of a plain average. On boundary faces the cell's own
+	# gradient is used as the average and W_R is the ghost state. Returns (N_cells, 3, N_vars, 2).
+	Delta_x = get_Delta_x(mesh)
+	dist = jnp.linalg.norm(Delta_x, axis = -1)  # (N_cells, 3)
+	e = Delta_x / dist[...,None]  # (N_cells, 3, 2)
+
+	grad_L = grad[:,None,...]  # (N_cells, 1, N_vars, 2)
+	grad_R = jnp.where((mesh.face_markers[mesh.face_connectivity] > 1)[...,None,None], grad_L, grad[mesh.neighbors])
+	grad_avg = 0.5 * (grad_L + grad_R)  # (N_cells, 3, N_vars, 2)
+
+	correction = jnp.einsum('ijkl,ijl->ijk', grad_avg, e) - (W_R - W_L) / dist[...,None]  # (N_cells, 3, N_vars)
+	return grad_avg - correction[...,None] * e[...,None,:]
 
 def gradient_GG(W_L, W_R, mesh):
 	surfaces = mesh.surface[mesh.face_connectivity]  # (N_cells, 3)
@@ -352,11 +374,11 @@ def get_vorticity(grad):
     omega = dv_dx - du_dy
     return omega
 
-def get_vorticity_from_field(W, mesh, **kwargs):
+def get_vorticity_from_field(W, mesh, interior_only=False, **kwargs):
 	W_L = jnp.repeat(W[...,None,:], 3, axis=-2)
 	W_R = W[mesh.neighbors]
 	W_R = BC_state(W_R, W_L, mesh, flag_NS=kwargs.get('flag_NS', False))
-	grad = getgradientLSQ(getPrimitive(W_L), getPrimitive(W_R), mesh)
+	grad = getgradientLSQ(getPrimitive(W_L), getPrimitive(W_R), mesh, interior_only = interior_only)
 
 	vort = get_vorticity(grad)
 	return vort

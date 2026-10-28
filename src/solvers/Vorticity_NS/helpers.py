@@ -67,6 +67,16 @@ def dipole_vortex(mesh, E0=2.0):
     omega_hat = omega_hat *  jnp.sqrt(E0 / E)
     return omega_hat
 
+def kelvin_helmholtz_multimode(mesh, **params):
+    # same (u, v) as Test_Cases.KevinHelmotzInstabilityMultimode (density not used), evaluated on the grid points; needs L = 1
+    sys.path.append('../../../..')
+    from types import SimpleNamespace
+    import jax_fvm.src.Cases.Test_Cases as Test_Cases
+    pts = SimpleNamespace(area=mesh.X.ravel(), barycenter=jnp.stack([mesh.X.ravel(), mesh.Y.ravel()], -1))
+    P = Test_Cases.KevinHelmotzInstabilityMultimode(**params).build(pts)
+    u, v = P[:,1].reshape(mesh.X.shape), P[:,2].reshape(mesh.X.shape)
+    return 1j * mesh.kx * jnp.fft.fft2(v) - 1j * mesh.ky * jnp.fft.fft2(u)  # omega = dv/dx - du/dy
+
 def gaussian_noise(mesh, key, E0=2.0):
     noise_real = jax.random.normal(key, (mesh.N, mesh.N))
     key, subkey = jax.random.split(key)

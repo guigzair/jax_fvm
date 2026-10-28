@@ -2,8 +2,8 @@ name: kelvin_helmholtz
 mesh:
   type: UniformMesh 
   params:
-    Nx: 175
-    Ny: 175
+    Nx: 250
+    Ny: 250
     Lx: 1.0
     Ly: 1.0
 kwargs:
@@ -13,7 +13,7 @@ kwargs:
   k: 0.30780
   flag_NS: False
   alpha: 1.
-  order: 1
+  order: 2
 initial_condition:
   type: kelvin_helmholtz
   params:
